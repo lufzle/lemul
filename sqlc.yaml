@@ -1,0 +1,73 @@
+version: "2"
+
+# Two packages, one per tier. A cell is its own database (see
+# internal/directory/schema.sql), so the two schemas are never queried through
+# one connection and must not share generated types.
+sql:
+  - engine: postgresql
+    schema: internal/directory/schema.sql
+    queries: internal/directory/queries.sql
+    gen:
+      go:
+        package: directorydb
+        out: internal/directory/directorydb
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+        emit_empty_slices: true
+        # ids as strings and timestamps as time.Time.
+        #
+        # sqlc's pgx defaults are pgtype.UUID ([16]byte plus a Valid flag) and
+        # pgtype.Timestamptz, which would put a conversion at every call site.
+        # Ids are already strings throughout this codebase -- a session id IS
+        # Claude Code's conversation id and is passed to it as argv -- so the
+        # mapping matches what the values actually are. Postgres still validates
+        # the format; a malformed id fails at the query rather than at the type.
+        overrides:
+          - db_type: "uuid"
+            go_type: "string"
+          - db_type: "uuid"
+            nullable: true
+            go_type:
+              type: "string"
+              pointer: true
+          - db_type: "timestamptz"
+            go_type: "time.Time"
+          - db_type: "timestamptz"
+            nullable: true
+            go_type:
+              type: "time.Time"
+              pointer: true
+
+  - engine: postgresql
+    schema: internal/store/schema.sql
+    queries: internal/store/queries.sql
+    gen:
+      go:
+        package: celldb
+        out: internal/store/celldb
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+        emit_empty_slices: true
+        # ids as strings and timestamps as time.Time.
+        #
+        # sqlc's pgx defaults are pgtype.UUID ([16]byte plus a Valid flag) and
+        # pgtype.Timestamptz, which would put a conversion at every call site.
+        # Ids are already strings throughout this codebase -- a session id IS
+        # Claude Code's conversation id and is passed to it as argv -- so the
+        # mapping matches what the values actually are. Postgres still validates
+        # the format; a malformed id fails at the query rather than at the type.
+        overrides:
+          - db_type: "uuid"
+            go_type: "string"
+          - db_type: "uuid"
+            nullable: true
+            go_type:
+              type: "string"
+              pointer: true
+          - db_type: "timestamptz"
+            go_type: "time.Time"
+          - db_type: "timestamptz"
+            nullable: true
+            go_type:
+              type: "time.Time"
+              pointer: true

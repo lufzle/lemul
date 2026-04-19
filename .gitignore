@@ -1,0 +1,38 @@
+# local env / creds — never commit
+.env
+.env.*
+*.pem
+credentials
+
+# -state-dir. It holds signing.key, from which EVERY workspace, attach and
+# runner credential in a deployment is derived (internal/creds) -- so it is the
+# one file in this tree whose leak is not a local-development inconvenience.
+# The README's own local-run instructions create it, which is exactly why it
+# needs a rule rather than care: it appears as untracked in a clean checkout and
+# is one `git add -A` from being committed.
+/.state/
+
+# chrome-cdp scratch, from driving the console headlessly. .chrome.datadir holds
+# session cookies for whoever was signed in.
+.chrome.pid
+.chrome.ws
+.chrome.datadir/
+.chrome.*.jsonl
+
+# build output
+/bin/
+
+# Quality-gate tools, installed by `make tools`.
+.tools/
+bin/
+
+# A bare `go build ./cmd/lem` drops the binary here rather than in bin/.
+/lem
+/controlplane
+/runner
+/supervisor
+/preflight
+/keyprobe
+
+# Session review notes, kept local.
+FABLE_FEEDBACK.md
