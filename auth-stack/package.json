@@ -1,0 +1,11 @@
+{
+  "name": "lemul-auth-stack",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "seed": "bun seed.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
