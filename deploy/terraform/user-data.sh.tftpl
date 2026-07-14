@@ -1,0 +1,140 @@
+#!/bin/bash
+# First boot of the vendor host.
+#
+# The stack's files come from a private S3 bucket the instance role can read.
+# They were embedded here base64-encoded until they did not fit: user_data is
+# capped at 16 KB and the five files are 36 KB raw, 13.4 KB gzipped -- which
+# fits only until the next comment is added to the compose file.
+#
+# stack_version (${stack_version}) is in this file purely so a change to any of
+# those objects changes user_data, and user_data_replace_on_change then rebuilds
+# the host. Without it, editing the compose file would upload a new object and
+# leave the running host on the old one.
+#
+# Secrets are GENERATED HERE and never leave. The database passwords and the
+# guard on admin./mail. do not appear in Terraform state, in user_data, or in
+# any output -- so reading this file, which any process on the host can, yields
+# nothing that is not already local. The SES SMTP credential is the exception
+# and has to be: it is minted by IAM, so it necessarily arrives from outside.
+set -euxo pipefail
+exec > >(tee /var/log/lemul-bootstrap.log) 2>&1
+
+BASE="${base}"
+APP_DIR=/opt/lemul
+
+dnf -y update
+dnf -y install docker
+# Unattended security updates. This host is internet-facing and long-lived,
+# which is exactly the combination where "we will patch it later" does not
+# happen.
+dnf -y install dnf-automatic
+sed -i 's/^upgrade_type.*/upgrade_type = security/' /etc/dnf/automatic.conf
+sed -i 's/^apply_updates.*/apply_updates = yes/' /etc/dnf/automatic.conf
+systemctl enable --now dnf-automatic.timer
+
+systemctl enable --now docker
+
+# The compose plugin is not in the AL2023 repositories.
+mkdir -p /usr/libexec/docker/cli-plugins
+ARCH=$(uname -m)
+curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$${ARCH}" \
+  -o /usr/libexec/docker/cli-plugins/docker-compose
+chmod +x /usr/libexec/docker/cli-plugins/docker-compose
+
+mkdir -p "$APP_DIR/initdb" "$APP_DIR/auth-stack"
+cd "$APP_DIR"
+
+# litellm.yaml is in this list for the reason the Caddyfile guard was: compose
+# BIND MOUNTS it, and Docker turns a missing source into a directory rather than
+# failing, so a host that fetched everything except this one would start a
+# gateway whose config is an empty folder.
+for f in docker-compose.yml Caddyfile up.sh litellm.yaml initdb/01-databases.sh auth-stack/seed.ts; do
+  aws s3 cp "s3://${bucket}/$f" "$APP_DIR/$f" --region ${region}
+done
+chmod +x up.sh initdb/01-databases.sh
+
+# up.sh mounts ../auth-stack for the seeder, so the layout has to match the
+# repository's rather than being flattened.
+mkdir -p /opt/auth-stack && cp auth-stack/seed.ts /opt/auth-stack/seed.ts
+
+if [ ! -f .env ]; then
+  umask 077
+  cat > .env <<EOF
+BASE=$BASE
+# QUOTED. up.sh sources this file with the shell, so a value containing a space
+# -- which "email someone@example.com" is -- otherwise runs its second word as a
+# command. deploy/README.md warns about exactly this and this template did it
+# anyway, on the one line where the value is assembled rather than copied.
+CADDY_GLOBAL="${acme_email != "" ? "email ${acme_email}" : ""}"
+# EMPTY: a real certificate from Let's Encrypt, over HTTP-01 on port 80.
+CADDY_TLS=
+# 0, and it must be. With a real certificate there is nothing to excuse, and
+# leaving this on would let the seed talk to anything claiming to be Logto.
+SEED_TLS_INSECURE=0
+
+POSTGRES_PASSWORD=$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 32)
+APP_DB_PASSWORD=$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 32)
+
+REGISTRY=${registry}
+TAG=${image_tag}
+AWS_REGION=${region}
+
+# Real mail, so the identity provider is not fronted by an inbox anyone can
+# read. SES is in sandbox mode: it will only deliver to verified addresses.
+SMTP_HOST=${smtp_host}
+SMTP_PORT=465
+SMTP_SECURE=true
+SMTP_USER=${smtp_user}
+SMTP_PASS=${smtp_pass}
+SMTP_FROM=${smtp_from}
+
+# Who may sign up. Empty is open to anyone; see variables.tf.
+SIGNUP_ALLOWLIST=${signup_allowlist}
+
+LEMUL_GATEWAY_URL=${gateway_url}
+LEMUL_GATEWAY_KEY=${gateway_key}
+LEMUL_PINS=${pins}
+
+# Bedrock, behind the gateway (decision #12). A bearer token rather than an
+# access key pair, so this host holds no IAM principal that can reach a model.
+AWS_BEARER_TOKEN_BEDROCK=${bedrock_api_key}
+BEDROCK_REGION=${region}
+
+LEMUL_AUTH_AUDIENCE=https://api.lemul.local
+LOGTO_APP_ID=
+LOGTO_APP_SECRET=
+LOGTO_COOKIE_SECRET=
+LEMUL_CLI_CLIENT_ID=
+LEMUL_CONSOLE_CLIENT_ID=
+EOF
+fi
+
+aws ecr get-login-password --region ${region} \
+  | docker login --username AWS --password-stdin ${registry}
+
+./up.sh
+
+# A systemd unit so a reboot brings the stack back. up.sh rather than
+# `compose up`, because it is idempotent and re-checks the identity bootstrap --
+# and a host that came back with a half-seeded Logto would look like a broken
+# console rather than a missing step.
+cat > /etc/systemd/system/lemul.service <<'UNIT'
+[Unit]
+Description=lemul vendor stack
+Requires=docker.service
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/lemul
+ExecStart=/opt/lemul/up.sh
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload
+systemctl enable lemul.service
+
+echo "bootstrap complete: https://console.$BASE"

@@ -1,0 +1,21 @@
+# The Management API: everything that knows something.
+#
+# Distroless static, for the reason image/Dockerfile.runner is: the binary is
+# static (CGO_ENABLED=0), so there is nothing for a libc to do, and shipping no
+# shell means a compromised process has no interactive foothold.
+#
+# Built by deploy/build.sh, which cross-compiles first. Never a raw `docker
+# build` -- it would ship whatever binary happens to be in deploy/bin/, and an
+# unchanged image digest is the only tell.
+FROM gcr.io/distroless/static-debian12:nonroot
+
+COPY bin/controlplane /usr/local/bin/controlplane
+
+# -state-dir lives on a volume. It holds signing.key, from which EVERY
+# workspace, attach and runner credential in the deployment is derived -- so
+# losing it orphans every running task, and the control plane says so by
+# generating a fresh one at boot.
+VOLUME ["/state"]
+
+EXPOSE 9000
+ENTRYPOINT ["/usr/local/bin/controlplane"]

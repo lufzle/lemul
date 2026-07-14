@@ -1,0 +1,14 @@
+# Holds the database passwords and, after up.sh, the Logto client secret and
+# cookie secret.
+.env
+.env.generated
+# The repository root ignores `.env.*`, which catches the committed TEMPLATE
+# too. Negated here rather than loosened there: the root rule is what keeps a
+# real .env.production from ever being added by accident.
+!.env.example
+# Cross-compiled by build.sh.
+bin/
+# The guard on admin. and mail. -- a bcrypt hash and, beside it, the only copy
+# of the plaintext.
+caddy-auth.creds
+.caddy-auth.plaintext

@@ -1,0 +1,290 @@
+# The VENDOR side of the product: control plane, relay, console, and the
+# identity provider they all depend on.
+#
+# This is the other half of section 2.2's line. terraform/ is the module a
+# CUSTOMER applies in their own account, and nothing in it listens inbound;
+# everything here does, because this is the endpoint their runner dials out to.
+# Keeping the two in separate directories is the point -- a customer reading
+# terraform/ should find nothing of ours running in their VPC.
+#
+# Every public URL is derived from BASE (<elastic-ip>.sslip.io), because the OIDC
+# issuer is compared as a STRING by the browser, the console's server process and
+# the Go control plane. One value they all read is the only arrangement where
+# they cannot disagree.
+
+name: lemul-vendor
+
+services:
+  # One Postgres, two databases. The cell/directory schema and Logto's own
+  # storage have nothing to say to each other, but a single box does not need
+  # two servers to prove it.
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      # Read by initdb/01-databases.sh, which creates the non-superuser role the
+      # control plane insists on running as.
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD}
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+
+  logto:
+    image: svhd/logto:1.42
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: ["sh", "-c", "npm run cli db seed -- --swe && npm start"]
+    environment:
+      TRUST_PROXY_HEADER: "1"
+      DB_URL: postgres://postgres:${POSTGRES_PASSWORD}@db:5432/logto
+      # Absolute, public, and identical everywhere. A token minted against one
+      # spelling is rejected by a validator holding another, and the error says
+      # "invalid token" rather than naming the mismatch.
+      ENDPOINT: https://auth.${BASE:?set BASE}
+      ADMIN_ENDPOINT: https://admin.${BASE}
+
+  # Both Go images are distroless :nonroot, so they run as uid 65532 -- while a
+  # named volume is created root-owned, which the control plane meets as
+  # "open /state/signing.key: permission denied" and the relay meets one step
+  # later as "does not exist". Neither image has a shell to chown with, so a
+  # one-shot container does it before either starts.
+  state-init:
+    image: alpine:3
+    command: ["sh", "-c", "chown 65532:65532 /state && chmod 700 /state"]
+    volumes:
+      - state:/state
+
+  controlplane:
+    image: ${REGISTRY:-lemul}/lemul-controlplane:${TAG:-dev}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      state-init:
+        condition: service_completed_successfully
+    volumes:
+      - state:/state
+    command:
+      - -addr=:9000
+      - -state-dir=/state
+      - -apply-schema
+      - -session-cmd=claude
+      # What a placed task is told to dial. Inside a Fargate task `localhost` is
+      # the task itself, so this must be the public name -- the symptom
+      # otherwise lands in the WORKSPACE task's log while the control plane only
+      # says "did not dial in".
+      - -public-url=wss://cp.${BASE}
+      - -relay-url=wss://relay.${BASE}
+      - -region=${AWS_REGION:-us-east-2}
+      # Which model each role resolves to. They reach a session as
+      # ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL and must name models the
+      # gateway serves -- a pin the gateway does not know is a session that
+      # dies on its first prompt.
+      - -pins=${LEMUL_PINS:-opus=claude-opus-4-8,sonnet=claude-sonnet-4-6,haiku=claude-haiku-4-5}
+    environment:
+      # The application role, deliberately WITHOUT BYPASSRLS: a role that can
+      # see through the policies makes every one of them decorative, and the
+      # control plane refuses to start as anything else.
+      LEMUL_DATABASE_URL: postgres://lemul_app:${APP_DB_PASSWORD:?set APP_DB_PASSWORD}@db:5432/lemul?sslmode=disable
+      # DDL-capable, and used only by -apply-schema. The app role holds no DDL.
+      LEMUL_SCHEMA_URL: postgres://postgres:${POSTGRES_PASSWORD}@db:5432/lemul?sslmode=disable
+      LEMUL_AUTH_ISSUER: https://auth.${BASE}/oidc
+      LEMUL_AUTH_AUDIENCE: ${LEMUL_AUTH_AUDIENCE:-https://api.lemul.local}
+      # These two are NOT called LEMUL_AUTH_*, unlike the issuer and audience
+      # above. cmd/controlplane reads -auth-cli-client-id from LEMUL_CLI_CLIENT_ID
+      # and -auth-console-client-id from LEMUL_CONSOLE_CLIENT_ID, which is also
+      # what the seed emits. Getting them wrong is silent: the control plane
+      # starts, and GET /v1/auth/config simply omits client_id, so `lem login`
+      # has no client to present and the console's identity relay 401s.
+      LEMUL_CLI_CLIENT_ID: ${LEMUL_CLI_CLIENT_ID:-}
+      LEMUL_CONSOLE_CLIENT_ID: ${LEMUL_CONSOLE_CLIENT_ID:-}
+      LEMUL_LOG_FORMAT: json
+      LEMUL_GATEWAY_URL: ${LEMUL_GATEWAY_URL:-}
+      LEMUL_GATEWAY_KEY: ${LEMUL_GATEWAY_KEY:-}
+
+  relay:
+    image: ${REGISTRY:-lemul}/lemul-relay:${TAG:-dev}
+    restart: unless-stopped
+    depends_on:
+      state-init:
+        condition: service_completed_successfully
+    volumes:
+      # The same volume, for the one thing the two services genuinely share:
+      # the signing key. The control plane mints what the relay verifies.
+      - state:/state
+    command:
+      - -addr=:9001
+      - -state-dir=/state
+    environment:
+      LEMUL_LOG_FORMAT: json
+
+  # The five Logto values below arrive EMPTY on a first run and are filled in by
+  # up.sh after the seed. They cannot be `:?` required here: compose interpolates
+  # the whole file even when starting a subset, so a guard on them would refuse
+  # to start the very identity provider that mints them. up.sh checks instead,
+  # where the ordering actually lives.
+  console:
+    image: ${REGISTRY:-lemul}/lemul-console:${TAG:-dev}
+    restart: unless-stopped
+    depends_on: [controlplane]
+    environment:
+      # SERVER-side, so the internal service name. Routing this through the
+      # public hostname would send every server-side call out to the proxy and
+      # back in for no reason.
+      LEMUL_API: http://controlplane:9000
+      # BROWSER-side, so the public one.
+      LOGTO_ENDPOINT: https://auth.${BASE}
+      CONSOLE_ORIGIN: https://console.${BASE}
+      LOGTO_APP_ID: ${LOGTO_APP_ID:-}
+      LOGTO_APP_SECRET: ${LOGTO_APP_SECRET:-}
+      LOGTO_API_RESOURCE: ${LEMUL_AUTH_AUDIENCE:-https://api.lemul.local}
+      LOGTO_COOKIE_SECRET: ${LOGTO_COOKIE_SECRET:-}
+      # The workspace explorer: filesystem and processes tabs.
+      #
+      # OFF by default and that is not caution about maturity. The explorer is
+      # served by the supervisor, which runs as root, so inside a SHARED
+      # workspace one member can read another's 0700 home. Safe to enable where
+      # workspaces have a single member; not safe as a default. See
+      # console/src/lib/flags.ts and §13.
+      FF_WORKSPACE_EXPLORER: ${FF_WORKSPACE_EXPLORER:-}
+      FF_VIEW_SESSION: ${FF_VIEW_SESSION:-}
+
+  # The inference gateway (decision #12). Bedrock sits BEHIND it.
+  #
+  # Not published: only Caddy is, and this has no business being reachable from
+  # outside. The supervisor in each workspace task reaches it through the
+  # control plane's configured URL, which for a task in a customer VPC is a
+  # public one -- so a real deployment puts the gateway in THEIR account (§12.4)
+  # rather than here. This one is ours, which is why it can stay internal.
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./litellm.yaml:/app/config.yaml:ro
+    environment:
+      LITELLM_MASTER_KEY: ${LEMUL_GATEWAY_KEY:?set LEMUL_GATEWAY_KEY}
+      # The admin UI and spend logs both need a store. Without one LiteLLM
+      # starts, serves inference perfectly well, and answers "Not connected
+      # to DB!" at the login form -- which reads as a wrong password.
+      # Per-request cost attribution is the point of decision #12 and
+      # /spend/logs is where it comes from, so this is not only for a UI.
+      DATABASE_URL: postgresql://litellm:${APP_DB_PASSWORD}@db:5432/litellm
+      STORE_MODEL_IN_DB: "True"
+      # The UI has its OWN credentials, and they are not the master key.
+      # LiteLLM says so itself when they are unset -- "Invalid credentials
+      # used to access UI. Check UI_USERNAME, UI_PASSWORD" -- and the
+      # separation is worth keeping rather than working around: the master
+      # key is the INFERENCE credential every workspace task holds, and it
+      # is readable by the runner (section 13). A human signing in to read
+      # spend should not be presenting the same secret a task uses to
+      # generate tokens.
+      UI_USERNAME: ${LITELLM_UI_USERNAME:-admin}
+      UI_PASSWORD: ${LITELLM_UI_PASSWORD:?set LITELLM_UI_PASSWORD}
+      # A bearer token for Bedrock, not an access key pair -- so this host holds
+      # no IAM principal that can reach a model, and the credential can be
+      # rotated without touching the instance role.
+      AWS_BEARER_TOKEN_BEDROCK: ${AWS_BEARER_TOKEN_BEDROCK:?set AWS_BEARER_TOKEN_BEDROCK}
+      BEDROCK_REGION: ${BEDROCK_REGION:-us-east-2}
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+
+  # The console's CLIENT assets, copied out of its image into a volume Caddy
+  # can serve.
+  #
+  # TanStack Start's built server does NOT serve dist/client -- it expects the
+  # platform or a CDN to. Locally `vite dev` hides that completely, and the
+  # symptom in production is a page that renders with NO CSS at all: default
+  # serif, blue underlined links, and every asset 404. It looks like a broken
+  # stylesheet rather than a missing static file server.
+  #
+  # A one-shot copier rather than a shared mount of the image's own directory,
+  # because a volume mounted over /app/dist would hide the server bundle beside
+  # it.
+  console-assets:
+    image: ${REGISTRY:-lemul}/lemul-console:${TAG:-dev}
+    command: ["sh", "-c", "rm -rf /assets/* && cp -r /app/dist/client/. /assets/"]
+    volumes:
+      - clientassets:/assets
+
+  # Runs auth-stack/seed.ts on the internal network, so it can reach Logto and
+  # the database without either being published. A one-shot job rather than a
+  # service, which is what `profiles` says -- `docker compose up` skips it and
+  # `docker compose run` activates it.
+  seeder:
+    image: oven/bun:1
+    profiles: ["tools"]
+    # Resolve the PUBLIC names to the docker host, where Caddy publishes 443.
+    #
+    # The seed has to call Logto at the same hostname the issuer is minted for,
+    # or what it writes into the env file disagrees with what tokens carry. But
+    # inside a container that name resolves to the container -- fatally so
+    # locally, where BASE is 127.0.0.1.sslip.io and the seeder ends up dialling
+    # its own loopback. This is what a split-horizon DNS entry would do, and it
+    # also keeps the call off the public path on a real host.
+    extra_hosts:
+      - "auth.${BASE}:host-gateway"
+      - "admin.${BASE}:host-gateway"
+      - "console.${BASE}:host-gateway"
+    # No entrypoint override. `docker compose run seeder bun seed.ts` replaces
+    # the COMMAND only, so an entrypoint of ["bun"] would run `bun bun seed.ts`.
+    command: ["bun", "--version"]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      console:
+        condition: service_started
+      controlplane:
+        condition: service_started
+      relay:
+        condition: service_started
+      logto:
+        condition: service_started
+      mailpit:
+        condition: service_started
+      console-assets:
+        condition: service_completed_successfully
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      BASE: ${BASE}
+      CADDY_GLOBAL: ${CADDY_GLOBAL:-}
+      CADDY_TLS: ${CADDY_TLS:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # The guard's credentials, read by CADDY rather than passed through
+      # compose. A bcrypt hash is full of `$`; compose interpolates
+      # `environment:` values always and `env_file` values depending on its
+      # version, so routing the hash through either produced a working guard on
+      # one machine and one that rejected the correct password on another.
+      - ./caddy-auth.creds:/etc/caddy/auth.creds:ro
+      - clientassets:/srv/console:ro
+      - caddydata:/data
+      - caddyconfig:/config
+
+volumes:
+  # The console's static assets, produced by console-assets and read by caddy.
+  clientassets:
+  dbdata:
+  # Its own volume, and the one to back up: it holds signing.key, from which
+  # every workspace, attach and runner credential is derived. Losing it orphans
+  # every running task in every customer account.
+  state:
+  caddydata:
+  caddyconfig:

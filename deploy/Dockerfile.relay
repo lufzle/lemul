@@ -1,0 +1,21 @@
+# The session data path: PTY bytes, and nothing else.
+#
+# A SEPARATE IMAGE from the control plane rather than one image with two
+# entrypoints, and that is not packaging taste. Section 2.7's claim is that the
+# relay holds no database, no directory and no runner -- asserted over its own
+# import graph by TestTheRelayImportsNothingThatReadsCustomerData, because
+# nothing else would notice that decaying. Shipping both binaries in one image
+# would put the control plane's code on the relay's disk, which is exactly the
+# thing a customer asking "what can that process reach" would be shown.
+FROM gcr.io/distroless/static-debian12:nonroot
+
+COPY bin/relay /usr/local/bin/relay
+
+# The SAME -state-dir contents as the control plane: the relay verifies
+# credentials the control plane minted, so it needs that signing key and
+# deliberately will not invent one. A key nothing else shares rejects every
+# token it is handed.
+VOLUME ["/state"]
+
+EXPOSE 9001
+ENTRYPOINT ["/usr/local/bin/relay"]

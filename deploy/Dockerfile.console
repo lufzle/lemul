@@ -1,0 +1,33 @@
+# The operator console. TanStack Start (SSR) on Bun.
+#
+# Not distroless like the other two: this one needs a JavaScript runtime, and
+# the SSR bundle externalises its dependencies rather than inlining them, so
+# node_modules has to be present at runtime. Installed from the committed
+# lockfile in its own layer, which is also what keeps a rebuild after a source
+# change from reinstalling anything.
+#
+# The build runs HERE rather than on the host, unlike the Go images. The Go
+# binaries are cross-compiled by build.sh because the alternative is shipping a
+# toolchain; a bun build needs the same bun that runs it, so there is nothing to
+# save by moving it out.
+FROM oven/bun:1 AS build
+WORKDIR /app
+COPY console/package.json console/bun.lock ./
+RUN bun install --frozen-lockfile
+COPY console/ ./
+RUN bun run build
+
+FROM oven/bun:1
+WORKDIR /app
+COPY console/package.json console/bun.lock ./
+RUN bun install --frozen-lockfile --production
+COPY --from=build /app/dist ./dist
+
+# vite.config.ts pins server.host and preview.host to 127.0.0.1 deliberately.
+# That governs the DEV and PREVIEW servers, neither of which runs here -- this
+# is the built SSR server, and inside a container loopback would mean
+# unreachable. The boundary here is the proxy in front and the security group,
+# not the bind address.
+ENV HOST=0.0.0.0 PORT=3000
+EXPOSE 3000
+CMD ["bun", "dist/server/server.js"]

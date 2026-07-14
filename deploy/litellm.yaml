@@ -1,0 +1,54 @@
+# The inference gateway, on Bedrock.
+#
+# Decision #12: the gateway is the supported path and Bedrock is ONE BACKEND
+# BEHIND IT, rather than something Claude Code speaks natively. That is the
+# whole point of the arrangement -- the supervisor brokers every session through
+# a per-session loopback proxy, and what sits behind the gateway is the
+# customer's choice.
+#
+# Worth being honest about where this file runs: §12.4 says the gateway is
+# CUSTOMER-hosted, and hosting inference ourselves is §1.2's Option B, already
+# rejected. This deployment is both halves at once because it is ours, so this
+# stands in for a customer's gateway rather than being how the product ships.
+#
+# model_name is what Claude Code SENDS, and the left-hand names must match the
+# control plane's -pins exactly. The pins reach a session as
+# ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL, so a name here that no pin
+# mentions is a model nothing will ever ask for, and a pin naming a model absent
+# here is a session that dies on its first prompt.
+#
+# The right-hand side is an INFERENCE PROFILE (us.anthropic...), not a bare
+# model id. A profile is invoked by its own identifier and fans out to regional
+# model ARNs; asking for the bare id answers 400 with a message about on-demand
+# throughput that does not mention profiles at all.
+model_list:
+  - model_name: claude-opus-4-8
+    litellm_params:
+      model: bedrock/us.anthropic.claude-opus-4-8
+      aws_region_name: os.environ/BEDROCK_REGION
+      # A Bedrock API KEY, not an access key pair. It is a bearer token, so it
+      # needs no SigV4 signing and no IAM principal on this host -- which is
+      # also why it must be treated as a password: anyone holding it can invoke
+      # models in the account that issued it.
+      api_key: os.environ/AWS_BEARER_TOKEN_BEDROCK
+
+  - model_name: claude-sonnet-4-6
+    litellm_params:
+      model: bedrock/us.anthropic.claude-sonnet-4-6
+      aws_region_name: os.environ/BEDROCK_REGION
+      api_key: os.environ/AWS_BEARER_TOKEN_BEDROCK
+
+  - model_name: claude-haiku-4-5
+    litellm_params:
+      model: bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0
+      aws_region_name: os.environ/BEDROCK_REGION
+      api_key: os.environ/AWS_BEARER_TOKEN_BEDROCK
+
+litellm_settings:
+  # Per-workspace and per-user cost partitioning from metadata the supervisor's
+  # proxy injects is the point of decision #12; drop_params keeps an unknown
+  # field from failing a call outright.
+  drop_params: true
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

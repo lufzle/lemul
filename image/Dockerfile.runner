@@ -1,0 +1,19 @@
+# The runner: one per tenant, in the customer's VPC, control-only.
+#
+# Deliberately minimal. The runner never touches a session's data (decision #6),
+# so it needs no Claude Code, no image tooling and no shell -- it holds an
+# outbound tunnel and calls ecs:RunTask/StopTask. A smaller image is a smaller
+# thing to audit in an account we do not own.
+#
+# Distroless rather than alpine: the binary is static (CGO_ENABLED=0), so there
+# is nothing for a libc to do, and shipping no shell means a compromised runner
+# has no interactive foothold. Build it with image/build-runner.sh, which
+# cross-compiles first for the same reason image/build.sh does.
+FROM gcr.io/distroless/static-debian12:nonroot
+
+COPY bin/runner /usr/local/bin/runner
+
+# Placement, the control-plane URL and the tenant token all arrive as
+# environment from the task definition (terraform/tasks.tf), so there is nothing
+# to bake and nothing tenant-specific in this image.
+ENTRYPOINT ["/usr/local/bin/runner"]

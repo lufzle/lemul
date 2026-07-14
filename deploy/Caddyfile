@@ -1,0 +1,222 @@
+# One hostname per service, not one hostname with paths.
+#
+# The control plane and the relay BOTH serve /v1/..., so path routing would need
+# a rule per endpoint and would break the moment either grew one. Subdomains
+# keep the two-service split (section 2.7) visible in the URL, which is also the
+# thing a customer is being asked to believe.
+#
+# {$BASE} is <elastic-ip>.sslip.io. sslip.io is a public wildcard resolver that
+# reads the address out of the hostname -- a.b.c.d.sslip.io resolves to a.b.c.d,
+# and so does anything.a.b.c.d.sslip.io -- so there is no zone to create, no
+# record to publish and nothing to renew. It is on the Public Suffix List, which
+# matters here: it makes each <ip>.sslip.io its own registered domain for Let's
+# Encrypt rate-limiting rather than all of sslip.io sharing one budget.
+#
+# {$CADDY_TLS} is empty in production, where Caddy provisions a real certificate
+# over HTTP-01. Locally it is `tls internal`, because Let's Encrypt cannot reach
+# a 127.0.0.1.sslip.io name to validate it.
+#
+# The basic-auth credentials are IMPORTED FROM A FILE rather than read from the
+# environment, and that is not a style choice. A bcrypt hash is full of `$`, and
+# some Docker Compose versions interpolate env_file values while others do not --
+# so the same file yields a working hash on one host and a mangled one on the
+# next. Observed: it worked locally and rejected the correct password on the
+# deployed host, which fails closed but is indistinguishable from a wrong
+# password. Caddy reads this file itself, so nothing can rewrite it in transit.
+
+# One env var for the whole directive, not just its argument: `email` with an
+# empty value is a Caddyfile syntax error, so `email {$ACME_EMAIL}` refuses to
+# start whenever the address is not set. An empty global block is valid.
+{
+	{$CADDY_GLOBAL}
+}
+
+console.{$BASE} {
+	{$CADDY_TLS}
+	encode zstd gzip
+
+	# Static assets are served HERE, not by the console. TanStack Start's built
+	# server does not serve dist/client at all -- it expects the platform to --
+	# and `vite dev` hides that entirely, so the first sign of it is a
+	# production page with no CSS and every /assets/* returning 404.
+	#
+	# Immutable, content-hashed filenames, so they can be cached hard.
+	handle /assets/* {
+		root * /srv/console
+		header Cache-Control "public, max-age=31536000, immutable"
+		file_server
+	}
+
+	handle {
+		reverse_proxy console:3000
+	}
+}
+
+cp.{$BASE} {
+	{$CADDY_TLS}
+	# The control plane carries two WebSocket tunnels -- the runner's and every
+	# workspace task's control stream. Caddy proxies upgrades natively; what it
+	# must NOT do is buffer or time them out, since both are long-lived and
+	# mostly idle by design.
+	reverse_proxy controlplane:9000 {
+		flush_interval -1
+	}
+}
+
+relay.{$BASE} {
+	{$CADDY_TLS}
+	# PTY bytes. flush_interval -1 disables response buffering, without which a
+	# terminal renders in bursts -- the exact fidelity regression section 4.1
+	# exists to catch.
+	reverse_proxy relay:9001 {
+		flush_interval -1
+	}
+}
+
+# --- Public by design, and each has real authentication behind it -----------
+#
+# console/ cp/ relay/ auth are meant to be reachable: a runner and every
+# workspace task dial cp and relay from the customer's VPC, and the console is
+# the product. Authorisation is real at both levels (section 2.5) -- a caller
+# who is not a member of the org in the URL gets a 404, and the database
+# refuses independently through row-level security.
+
+auth.{$BASE} {
+	{$CADDY_TLS}
+	# Logto's OIDC endpoint. The issuer is compared AS A STRING by the control
+	# plane, the console and every token, so this hostname is load-bearing: it
+	# has to be the same one Logto was seeded with.
+	reverse_proxy logto:3001
+}
+
+gw.{$BASE} {
+	{$CADDY_TLS}
+	# The inference gateway, and it has to be PUBLIC even though it runs beside
+	# the control plane: the thing that calls it is a supervisor inside a
+	# workspace task in the CUSTOMER's VPC (§12.4), which cannot reach a compose
+	# service name. An internal URL here is a session that comes up with no
+	# model, which reads as "the gateway is down" rather than "unroutable".
+	#
+	# Guarded by LiteLLM's own master key, which the supervisor holds and a
+	# session never sees (§12.6) -- so this is a bearer-token endpoint rather
+	# than an open one. Worth knowing what that is and is not: anyone holding
+	# the key can spend against the Bedrock account behind it, so it is a
+	# credential to rotate, not a URL to share.
+	# AN ALLOWLIST OF INFERENCE, mirroring internal/gateway/proxy.go's own.
+	#
+	# That one runs inside the workspace task and bounds what a SESSION can ask
+	# for. This one bounds what THE INTERNET can, and they are different
+	# questions: everything under this hostname is LiteLLM, which serves an
+	# admin console at /ui and key management at /key/*. Without this, the
+	# credential the supervisor holds for inference is also a credential for
+	# administering the gateway -- minting keys, changing models -- from
+	# anywhere.
+	#
+	# An allowlist rather than blocking /ui and /key: a denylist needs updating
+	# every time LiteLLM grows an endpoint, and fails open in the meantime.
+	@inference path /v1/messages /v1/messages/count_tokens /v1/models /v1/models/*
+	handle @inference {
+		reverse_proxy litellm:4000 {
+			# Model responses stream. Buffering them would make every session
+			# look like it pauses and then dumps.
+			flush_interval -1
+		}
+	}
+	handle {
+		# Logged, for the reason internal/gateway/proxy.go logs its own refusals
+		# loudly: the failure mode of an allowlist is a legitimate endpoint
+		# nobody thought of, and without the path in a log that is a mystery 404
+		# inside somebody's TUI rather than a one-line diagnosis.
+		respond `{"type":"error","error":{"type":"not_found_error","message":"this endpoint forwards inference requests only"}}` 404
+	}
+
+	# Access logging for THIS host only, for the reason
+	# internal/gateway/proxy.go logs its own refusals loudly: the failure mode
+	# of an allowlist is a legitimate endpoint nobody thought of, and without
+	# the path in a log that is a mystery 404 inside somebody's TUI rather than
+	# a one-line diagnosis. Paths and statuses only -- no bodies, so no prompts.
+	log {
+		output stderr
+	}
+}
+
+# --- Not public. Reaching any of these IS full access -----------------------
+
+gwadmin.{$BASE} {
+	{$CADDY_TLS}
+	# LiteLLM's admin console and management API -- spend, models, key
+	# generation. The SAME service as gw. above, on a different hostname with a
+	# different rule, and the split is the point.
+	#
+	# gw. has to be reachable from the customer's VPC, so it is reachable from
+	# the internet; it therefore serves inference and nothing else. Everything
+	# LiteLLM offers BESIDES inference lives here instead, behind the same guard
+	# as Logto's admin console -- because the credential involved is LiteLLM's
+	# MASTER key, which mints keys and edits models rather than merely spending
+	# tokens.
+	#
+	# Same shape as auth. versus admin. for Logto: the endpoint a machine needs
+	# and the console a human needs are different surfaces with different
+	# exposure, and giving them one hostname means the looser rule wins.
+	# NO basic_auth here, unlike admin. and mail. next door, and the difference
+	# is not inconsistency.
+	#
+	# Those two are guarded because they have NO authentication of their own:
+	# Logto's admin account is CLAIMABLE on a fresh deployment, and Mailpit is
+	# an open inbox that happens to hold every sign-in code. LiteLLM does have
+	# its own -- a master key for the API and UI_USERNAME/UI_PASSWORD for the
+	# console -- so a second layer here adds a little and costs a lot: the UI is
+	# a single-page app, and a basic-auth challenge on every XHR it makes
+	# re-prompts the browser until the thing is unusable.
+	#
+	# What still protects it: /key/* and the rest of the management API require
+	# the master key as a bearer token, and the console requires its own
+	# credentials. What it is NOT protected from is anyone who holds the master
+	# key -- which is the same key every workspace task holds and the runner can
+	# read (§13). Fixing that means a virtual key for the supervisor, not
+	# another layer here.
+	reverse_proxy litellm:4000
+}
+
+# --- Not public. Reaching any of these IS full access -----------------------
+
+admin.{$BASE} {
+	{$CADDY_TLS}
+	# Logto's own admin console, on a different port and a different tenant from
+	# the OIDC endpoint above. The two are not interchangeable -- asking :3001
+	# for an admin token answers invalid_client, which reads like a bad secret.
+	#
+	# GUARDED, because on a fresh deployment the admin account is CLAIMABLE:
+	# there are no users, and the first visitor is invited to create the
+	# administrator of the identity provider this whole deployment trusts.
+	# Verified rather than assumed -- a fresh stack answers /admin with a
+	# welcome page and the users table is empty.
+	#
+	# /oidc/token is exempt, and narrowly: the seed has to mint a management
+	# token and cannot present basic auth, while Logto refuses the same request
+	# on an internal address because it resolves its tenant from the host. That
+	# endpoint is not a way in -- it demands the m2m client secret, which lives
+	# in the database on this host. The claimable UI at / and everything under
+	# /api stay behind the guard.
+	@ui not path /oidc/token
+	basic_auth @ui {
+		import /etc/caddy/auth.creds
+	}
+	reverse_proxy logto:3002
+}
+
+mail.{$BASE} {
+	{$CADDY_TLS}
+	# Mailpit, where the passwordless sign-in codes land.
+	#
+	# THIS IS THE AUTHENTICATION SYSTEM, not a convenience. Sign-in is
+	# passwordless email and there is no other mailbox, so anyone who can read
+	# this inbox can sign in as ANYONE -- request a code for any address and
+	# collect it here. It has no authentication of its own, so the guard is the
+	# only thing between an open inbox and a complete bypass of every boundary
+	# section 2.5 describes.
+	basic_auth {
+		import /etc/caddy/auth.creds
+	}
+	reverse_proxy mailpit:8025
+}
