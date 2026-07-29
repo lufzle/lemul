@@ -89,9 +89,17 @@ writing code; I'd rather agree on structure first.
 - Per `~/.claude/CLAUDE.md`: journal completed work to
   `~/w/.claude-journal/lufzle-lemul-cc.md` as `{YYMMddTHHmm}: {description}`.
 
-## One decision I still owe you
+## Decision #4 is settled — but verify its assumption first
 
-**Open decision #4 — tmux vs. our own VT state model** for reconnect and
-Join-as-Viewer. It is now on the Phase 1 critical path: E2E rules out relay-side screen
-state, so the model has to live in the supervisor, which shapes how the supervisor is
-written from the first commit. Raise it early with a recommendation.
+**No tmux, and no VT state model in Phase 1.** Detach/reattach is: keep the child alive
+on disconnect, a bounded replay ring per session, and a SIGWINCH nudge (cols−1, then
+back) on reattach so the app repaints. The VT state model lands in Phase 2 for
+Join-as-Viewer and lossless reconnect. Reasoning in §12 decision #4.
+
+**First task of the session — a 2-minute check that gates the above:** does Claude Code
+repaint its *whole* frame on SIGWINCH, or only patch part of it? Run the prototype
+(`go run ./supervisor -cmd claude` + `go run ./client`), attach, resize the terminal
+window, and look. Manual matrix item #3 passing is encouraging but not conclusive.
+
+If it only patches partially, the Phase 2 VT model moves into Phase 1 and the cheap
+trick is off. Confirm before writing the reattach path.
