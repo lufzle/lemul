@@ -1,0 +1,16 @@
+# build output
+/tui-proxy-proto/sup
+/tui-proxy-proto/cli
+/tui-proxy-proto/relay/relay
+/tui-proxy-proto/runner/runner
+/otel-probe/otel-probe
+
+# spike artifacts
+/otel-probe/capture/
+/otel-probe/probe.log
+
+# local env / creds — never commit
+.env
+.env.*
+*.pem
+credentials
