@@ -196,11 +196,41 @@ The combinations that must all work:
 
 **Auto-stop cascade.** Session idle-stop → last session stops → warm hold → workspace stops → snapshot to S3.
 
-**Idle must mean user-idle AND agent-idle.** A naive PTY-idle check sees zero keystrokes during an unattended multi-hour run and would kill the exact workload remote sandboxes exist for. The signal is already validated in S2 (`otel-probe/RESULTS.md`):
+**Idle must mean user-idle AND agent-idle.** A naive PTY-idle check sees zero keystrokes during an unattended multi-hour run and would kill the exact workload remote sandboxes exist for.
 
-> stop when: no client attached **AND** no `claude_code.active_time.total{type=cli}` activity **AND** no recent `api_request` / `tool_result` events
+**Four conditions, all required, all observable locally by the supervisor:**
 
-(`type=user` is keyboard; **`type=cli` is tool execution and model responses** — that is the "agent is working" signal.) Per-session configurable, and the user can disable it outright for a specific session.
+> stop when: **no client attached** · **no PTY output** recently · **no model
+> requests** through the gateway recently · **no tool executing**
+
+The last one is load-bearing and the easiest to forget. A one-hour `make`, a
+long test run, or anything blocked on the network produces **no PTY output and
+no model calls**, because Claude Code is sitting blocked waiting on the tool.
+Without a tool-execution check, the other three conditions all go quiet precisely
+when the workspace is busiest, and the build gets reaped an hour in.
+
+"A tool is executing" means Claude Code has a transient child process.
+**Careful: MCP servers are long-lived children too** (and decision #5 puts a
+search MCP server in the image), so a naive "has any child ⇒ busy" test reads as
+permanently busy and disables idle detection altogether. The distinction is
+process start time: MCP servers start with Claude Code, tool invocations start
+later. Capture a baseline of descendants once startup settles; anything outside
+that baseline is a running tool.
+
+**None of this needs OTel.** The supervisor already knows client attachment and
+PTY activity, the gateway broker knows model requests, and process descendants
+are a `/proc` read. That matters because it unblocks idle detection from the
+telemetry pipeline entirely.
+
+**OTel refines it rather than enabling it.** `active_time.total{type=cli}` is
+the more precise "agent is working" signal — `type=user` is keyboard, `type=cli`
+is tool execution and model responses (validated in S2,
+`otel-probe/RESULTS.md`) — along with recent `api_request` / `tool_result`
+events. Where telemetry is deployed, prefer it; where it is not, the four local
+conditions stand on their own.
+
+Per-session configurable, and the user can disable it outright for a specific
+session.
 
 #### Admission control (resource saturation)
 
@@ -509,6 +539,16 @@ Automated portion: `tui-proxy-proto/fidelity_test.go` (runs against both 1-hop a
 
 This is what makes "don't own the client" viable. CC emits metrics, events/logs, and (beta) traces over standard OTLP.
 
+**Scope, after decision #12.** Telemetry is for **audit and behaviour**, not
+billing. The gateway now answers what a session cost; nothing but OTel answers
+what the agent *did* — which tools ran, which the user rejected, which a hook
+blocked, whether anyone flipped into bypass mode, which plugins loaded. For an
+enterprise buyer that is most of why not owning the client is acceptable at all.
+
+It is therefore **optional infrastructure**: gated on an OTel endpoint being
+configured, so a customer who does not want to run a collector loses the audit
+signals rather than getting a broken deployment. A reasonable tier boundary.
+
 ### 5.1 Topology
 
 ```
@@ -552,7 +592,13 @@ Events: `api_request` (`cost_usd_micros`, input/output/cache tokens, `model`, `q
 
 Metrics: `cost.usage` · `token.usage` · `lines_of_code.count` · `commit.count` · `pull_request.count` · `active_time.total` · `code_edit_tool.decision`
 
-**Per-tenant attribution is free** — inject `OTEL_RESOURCE_ATTRIBUTES="tenant.id=…,workspace.id=…"` per sandbox; every metric and event carries it. That is per-workspace billing with no custom instrumentation.
+**Per-tenant attribution is free** — inject `OTEL_RESOURCE_ATTRIBUTES="tenant.id=…,workspace.id=…"` per sandbox; every metric and event carries it.
+
+> **The gateway is the cost source of record, not this** (decision #12). OTel's
+> `cost_usd_micros` is Claude Code's own self-report; the gateway's figure is what
+> the customer is actually billed, is unforgeable, and cannot be bypassed. Keep
+> both — a divergence between them is itself a signal worth having — but bill from
+> the gateway.
 
 **`prompt.id`** (UUID v4) correlates every event from one prompt — filter on it to reconstruct a turn. Deliberately excluded from metrics (cardinality), so turn reconstruction happens in the event pipeline.
 
@@ -681,7 +727,7 @@ One workspace, one tenant, IDs hardcoded in config. No auth, no multi-tenancy, n
 - [x] **Detach/reattach without tmux or a VT model** (decision #4): (a) the child now outlives client disconnect — that *is* detach; (b) bounded replay ring per session (~256 KB); (c) SIGWINCH nudge on reattach; **(d) mode prelude** — replay the terminal-mode negotiation, which the repaint does *not* restore. The repaint assumption is **measured, not assumed** (§12.2, `winch-probe/RESULTS.md`): full-viewport repaint confirmed, and (d) was the finding that fell out of it. The ring turned out to be polish rather than correctness.
 - [ ] Session lifecycle — stop (Ctrl-C/Ctrl-D semantics) / resume via `claude --resume <id>`; conversation persists on the workspace volume (§2.4)
 - [ ] Admission control at session-create — `max_sessions` and `min_free_memory_mb` policies (§2.4). **Refuse with a clear error; never let OOM be the discovery mechanism.** *(The supervisor already reports headroom up the tunnel; the control plane logs it but does not yet gate on it.)*
-- [ ] Idle detection using the S2-validated signal: no client attached AND no `active_time.total{type=cli}` AND no recent `api_request`/`tool_result` (§2.4). Per-session opt-out.
+- [ ] Idle detection — four local conditions, **no OTel dependency**: no client attached AND no recent PTY output AND no recent gateway requests AND **no tool executing** (§2.4). The tool check is what stops a one-hour build being reaped, since it produces neither output nor model calls; mind that MCP servers are long-lived children and need a start-time baseline to tell apart. OTel refines it where deployed. Per-session opt-out.
 - [ ] Warm hold (~5 min) before scaling a workspace task to zero (§2.4)
 - [x] Runner — outbound tunnel, stream multiplexing, control-only (`internal/runner`). `RunTask`/`StopTask` proper arrive with the `ecs` driver; the `local` driver exercises the same interface.
 - [x] Relay — authenticate → resolve workspace → byte pump (`internal/controlplane`). Tunnels are a **set per tenant** as required, with round-robin dispatch so a second replica is exercised rather than idle.

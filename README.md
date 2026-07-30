@@ -151,6 +151,18 @@ inference and runs arbitrary code, so a Bash command can always just ask Claude
 Code for a completion. What bounds it is a per-workspace budget at the gateway
 (§12.4), not the proxy.
 
+## Telemetry
+
+Claude Code's OpenTelemetry is for **audit and behaviour**, not billing — the
+gateway is the cost source of record (§12.4). Nothing but OTel answers what the
+agent *did*: which tools ran, which the user rejected, which a hook blocked,
+whether anyone flipped into bypass mode. It is optional infrastructure, gated on
+an endpoint being configured.
+
+Content stays redacted: all four `OTEL_LOG_*` flags are set off **explicitly**,
+because `OTEL_LOG_ASSISTANT_RESPONSES` silently falls back to
+`OTEL_LOG_USER_PROMPTS` when unset.
+
 ## Checking an AWS account
 
 ```bash
