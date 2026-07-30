@@ -15,6 +15,10 @@ Remote, sandboxed Claude Code workspaces, multi-tenant, running in the customer'
 | Path | What it is |
 |---|---|
 | `CC_REMOTE_ANALYSIS.md` | This document. The decision record — read §1, §2, §12 before changing architecture. |
+| `image/` | The workspace sandbox image. Managed settings are rendered at container start, not baked. |
+| `docs/onboarding-bedrock.md` | Customer-facing runbook for Bedrock model access — five failure modes, all hit for real. |
+| `litellm-spike/` | Local LiteLLM + Postgres. The gateway decision #12 selects; also where spend attribution is visible. |
+| `otel-stack/` | Local OpenObserve for browsing telemetry. |
 | `cmd/`, `internal/`, `e2e/` | **Phase 1 product code.** The runner/supervisor split, relay, driver interface, local CLI. See `README.md`. |
 | `winch-probe/` | **Decision #4 gate** (✅). Measures whether Claude Code repaints fully on SIGWINCH. `RESULTS.md` has the verdict and the mode-prelude finding it turned up. |
 | `tui-proxy-proto/` | **Spike S3** (✅). Go: PTY-over-WSS, one-hop and two-hop (yamux tunnel). **Frozen as the S3 evidence** — its `proto/` and `tunnel/` were lifted into `internal/`, and its merged runner-proxy shape was replaced by the §2.8 split. `README.md` has results and the reasoning behind each design choice. |
@@ -22,9 +26,11 @@ Remote, sandboxed Claude Code workspaces, multi-tenant, running in the customer'
 | `s1-bedrock/` | **Spike S1** (✅). Dockerfile + `run-s1.sh` (7/7) for Claude Code against Bedrock in a container, plus the image's managed-settings file. `RESULTS.md` covers the Bedrock feature gap and model-access traps. |
 | `~/w/.claude-journal/lufzle-lemul-cc.md` | Chronological work log. |
 
-**Status: Phase 0 complete (all spikes pass). Phase 1 in progress — increment 1
-(runner/supervisor split, relay, driver interface, endpoint negotiation) is done
-and under test.**
+**Status: Phase 0 complete. Phase 1 substantially done — the runner/supervisor
+split, sandbox image, `local`+`docker` drivers, gateway inference with a
+per-session loopback broker, Bedrock preflight and telemetry all work end to end
+against real accounts. Remaining: the `ecs` driver + Terraform, and the session
+lifecycle group (stop/resume, idle, warm hold, admission gating).**
 
 ---
 
@@ -765,6 +771,7 @@ One workspace, one tenant, IDs hardcoded in config. No auth, no multi-tenancy, n
 - [x] **Idempotent workspace dispatch** — the generation counter, the derived key (`driver.Spec.IdempotencyKey`, 64-char capped) and per-workspace placement locking are all in. Wiring the key to ECS `--client-token` lands with the `ecs` driver; the `local` driver already honours it. Generation is persisted, since a control-plane restart that reset it would silently void the protection.
 - [x] **Endpoint negotiation** — `GET /v1/sessions/{sid}/endpoint` returns `{transport, address, credential, peer_pubkey}`; the client refuses any transport it does not speak rather than assuming. Credentials are single-use.
 - [x] Local CLI — raw mode, WSS, resize, termios restore on exit/panic/SIGTERM, `Ctrl-]` detach, reattach by session id (`cmd/ourcli`). `--create` and the not-found prompt wait for the workspace CRUD API; the non-TTY guard is already in, so the pipeline-hang failure mode cannot appear.
+- [x] **Gateway inference with a per-session loopback broker** (decision #12, §12.4) — not in the original checklist, but it replaced direct-to-Bedrock as the supported path. The supervisor holds the gateway credential and brokers each session through its own loopback port, so no credential enters a session and attribution cannot be forged. Verified from inside a sandbox.
 - [ ] Terraform module — runner service, both IAM roles, task definition, VPC endpoint, S3 bucket, and **runner token delivery** (Terraform variable → Secrets Manager → task env; document rotation)
 - [x] **Workspace-runtime driver interface, from day one** — `internal/driver` with the `local` (process) and `docker` (real sandbox image) drivers landed. The `ecs` driver is the remaining implementation. This is the mitigation for the biggest standing risk in §13: once the data plane lives in customer accounts we lose the ability to reproduce failures, so our debugging environment must share a code path with the product — the e2e suite runs the real supervisor binary through the real driver for exactly that reason.
 

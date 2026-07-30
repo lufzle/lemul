@@ -8,7 +8,10 @@ The design record is [`CC_REMOTE_ANALYSIS.md`](CC_REMOTE_ANALYSIS.md) — read �
 decisions) before changing anything structural. Every non-obvious choice in this
 code has a rationale there, and the comments cite it by section.
 
-**Status: Phase 0 complete. Phase 1 increment 1 (the runner/supervisor split) complete.**
+**Status: Phase 0 complete. Phase 1 substantially done** — the split, sandbox
+image, both local drivers, gateway inference, preflight and telemetry all work end
+to end. Remaining: the `ecs` driver + Terraform, and session lifecycle
+(stop/resume, idle, warm hold, admission gating).
 
 ## Components
 
