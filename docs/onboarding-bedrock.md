@@ -89,23 +89,83 @@ To reduce the chance of getting here: write the `useCases` description properly
 the first time (§1), and check whether the Org management account has already
 completed the form before submitting from a member account.
 
-## 4. What the preflight tells you when it fails
+## 4. The five ways this fails
 
-Failures are mapped to the actual fix, because the underlying AWS errors look
-alike and are not:
+All of these have been hit on real accounts. They look similar and have nothing
+in common, which is most of what the preflight is for.
 
-| What you see | What it means | What to do |
+| Symptom | Cause | Fix | Self-service? |
+|---|---|---|---|
+| `404` *"Model use case details have not been submitted"* | The form was never filled in | §1 — granted on submission, then wait ~15 min | ✅ minutes |
+| `400 ValidationException: Operation not allowed`, with `authorizationStatus: NOT_AUTHORIZED` | The form **was** submitted and refused | §3 — AWS support case | ❌ days |
+| `429 ThrottlingException: Too many tokens per day`, with a daily-token quota of **0** | The account has no token allocation. Frequently caused by a **failed Marketplace subscription**, itself caused by a declined payment card | §4.1 below | ❌ needs AWS |
+| `403 AccessDeniedException: <model> is not available for this account` | The account is not offered that model at all | Nothing technical will fix it — commercial gate, contact AWS Sales | ❌ |
+| `403 AccessDeniedException: … not authorized to perform: bedrock:InvokeModel` | IAM, not model access at all | Fix the sandbox task role policy | ✅ minutes |
+
+The two `403`s are the pair most often confused: one is your own IAM policy (a
+two-minute fix), the other is AWS declining to sell you the model. Read the
+message, not the status code.
+
+### 4.1 The zero-quota trap, and the payment card behind it
+
+A `429 Too many tokens per day` on an account that has *never* invoked anything
+is not throttling in any normal sense. Check the quota:
+
+```bash
+aws service-quotas list-service-quotas --service-code bedrock --region <region> \
+  --max-items 400 --query "Quotas[?contains(QuotaName,'tokens per day')]"
+```
+
+If the values are **0** and `Adjustable: false`, Service Quotas will refuse an
+increase request outright — the limit is AWS-set and only a support case moves it.
+
+**The non-obvious part:** on a new account this is often downstream of a
+**declined credit card**. Anthropic models are enabled through an AWS Marketplace
+subscription, so a card in an error state means the subscription silently never
+completes, and what surfaces days later is a zero quota and models reported as
+unavailable. Nothing in any Bedrock error message mentions the card.
+
+So before opening a quota case, check
+[Billing → Payment methods](https://console.aws.amazon.com/billing/home#/paymentmethods).
+If the card was in error, fix it, then re-drive the subscriptions (§4.2) — AWS
+retries the authorization automatically but does not retroactively complete the
+model subscriptions.
+
+### 4.2 Model agreements are a separate step from the form
+
+The use case form is account-wide. A **model agreement** (the Marketplace
+subscription) is per model, and both are required:
+
+```bash
+TOKEN=$(aws bedrock list-foundation-model-agreement-offers \
+  --model-id anthropic.claude-haiku-4-5-20251001-v1:0 --region <region> \
+  --query 'offers[0].offerToken' --output text)
+
+aws bedrock create-foundation-model-agreement \
+  --model-id anthropic.claude-haiku-4-5-20251001-v1:0 \
+  --offer-token "$TOKEN" --region <region>
+```
+
+Usage-based pricing, no upfront charge, reversible with
+`delete-foundation-model-agreement`.
+
+**Do not trust `agreementAvailability`.** It reports `NOT_AVAILABLE` for models
+whose agreement can be created successfully — verified on a real account for
+Opus 4.8, Opus 5 and Sonnet 5. Attempt the call and read the result.
+
+### 4.3 Status fields that do not mean what they say
+
+Three separate AWS signals proved unreliable in one afternoon. Only a real
+`InvokeModel` has been trustworthy:
+
+| Signal | Says | Actually means |
 |---|---|---|
-| `the account does not have model access…` | The FTU form was never completed, or was denied | §1, then §3 if denied |
-| `the task role lacks bedrock:InvokeModel…` | IAM, not model access | Fix the sandbox task role policy. Minutes. |
-| `this model requires an inference profile` | You pinned a bare model ID | Use the `us.` cross-region profile ID |
-| `no such model in this region` | Right pin, wrong region | Pins are region-specific |
-| `throttled, which is a quota problem…` | Says nothing about access | Retry; request a quota increase if it persists |
+| `list-inference-profiles` → `ACTIVE` | Model exists in the region | Nothing about your access |
+| `authorizationStatus: AUTHORIZED` | Account is authorized | The model may still refuse to invoke |
+| `agreementAvailability: NOT_AVAILABLE` | Cannot subscribe | The subscription may well succeed |
 
-The distinction that matters most is the first two. `AccessDeniedException` covers
-both "your IAM policy is wrong" (a two-minute fix) and "your account has no model
-access" (potentially days), and telling them apart is most of what the preflight
-is for.
+This is why layer 2 of the preflight is a real invocation and layer 1 is only
+advisory.
 
 ## 5. Model pins
 
