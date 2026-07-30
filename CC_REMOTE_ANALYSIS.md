@@ -691,10 +691,14 @@ Remaining gaps: interactive-only events (`permission_mode_changed`,
 injecting `OTEL_EXPORTER_OTLP_ENDPOINT` into a running workspace had no effect.
 Redaction re-verified in the same pass (`prompt='<REDACTED>'`, `prompt_length=54`).
 
-**Traces: still nothing.** `OTEL_TRACES_EXPORTER=otlp` plus `always_on` sampling
-renders correctly into managed settings and Claude Code 2.1.220 emits **zero
-spans**. Not a receiver problem — a hand-made OTLP trace POST is accepted.
-Re-check on a CC upgrade.
+**Traces: Claude Code emits none.** Proved against a neutral receiver that
+accepts anything: with the exporter, `always_on` sampling, export interval,
+raised flush/shutdown timeouts and traceparent propagation all set, and no
+exporter errors, 2.1.220 wrote logs and metrics payloads and **never a traces
+payload**. Receiver, protocol (both json and protobuf), sampling, intervals and
+propagation are all ruled out. Possibly gated behind a server-side feature flag,
+which a sandbox with restricted egress would never receive. Re-check on a CC
+upgrade; do not spend more time on it.
 
 **Headless runs under-report events.** `claude -p` emits only `user_prompt`;
 `api_request` and `tool_result` fire at end-of-turn and are lost when the process
