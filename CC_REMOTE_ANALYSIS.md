@@ -272,6 +272,18 @@ Keep the two orthogonal: **permission gates the verb, scope gates the object.**
 
 `team` implies a team entity not yet in the model — either add it now or restrict v1 scopes to `owner` \| `org`.
 
+> **Viewer mode has a third door, found 2026-07-30.** Input-dropping was enforced
+> at the relay and the supervisor, and explicit resize control messages were
+> dropped too — but a viewer's size travelled in the *attach request*, and
+> `Session.Attach` handed it straight to the repaint nudge, which resizes when it
+> differs from the current size. So attaching a viewer silently reflowed the
+> **controller's** Claude Code: the same violation as letting a viewer type, just
+> quieter. It went unnoticed while every viewer was a CLI on a similar-sized
+> terminal, and became unmissable with a browser viewer, whose size is whatever
+> the window happens to be. Viewer attachments now nudge at the current size,
+> which takes the `cols-1` path — repaint for the new viewer, no resize for
+> anyone. `ptysession.TestViewerAttachDoesNotResizeTheSession`.
+
 > **Session attach must be owner-scoped.** A session is user-specific (§2.3) while
 > a workspace can be shared at `team` or `org` scope, so authorising attach at the
 > *workspace* level would let one user land in another's live conversation.
@@ -775,7 +787,7 @@ One workspace, one tenant, IDs hardcoded in config. No auth, no multi-tenancy, n
 - [x] **Endpoint negotiation** — `GET /v1/sessions/{sid}/endpoint` returns `{transport, address, credential, peer_pubkey}`; the client refuses any transport it does not speak rather than assuming. Credentials are single-use.
 - [x] Local CLI — raw mode, WSS, resize, termios restore on exit/panic/SIGTERM, `Ctrl-]` detach, reattach by session id (`cmd/ourcli`). `--create` and the not-found prompt wait for the workspace CRUD API; the non-TTY guard is already in, so the pipeline-hang failure mode cannot appear.
 - [x] **Gateway inference with a per-session loopback broker** (decision #12, §12.4) — not in the original checklist, but it replaced direct-to-Bedrock as the supported path. The supervisor holds the gateway credential and brokers each session through its own loopback port, so no credential enters a session and attribution cannot be forged. Verified from inside a sandbox.
-- [x] **Operator console** (`console/`) — not in the original checklist. TanStack Start SSR over `GET /v1/status`, `GET /v1/workspaces` (both new) and the existing session/preflight endpoints, with the lifecycle verbs wired to buttons. Two things it is careful about: it reports the stored record **and** whether a task is actually holding a tunnel, since a workspace recorded `active` with no task is the state worth seeing; and it keeps §12.3's three preflight states apart. **Loopback-bound in `vite.config.ts`** — with no auth it is exactly as exposed as the control plane. No terminal in it: attach stays in `ourcli` (§11 owns the web client).
+- [x] **Operator console** (`console/`) — not in the original checklist. TanStack Start SSR over `GET /v1/status`, `GET /v1/workspaces` (both new) and the existing session/preflight endpoints, with the lifecycle verbs wired to buttons. Two things it is careful about: it reports the stored record **and** whether a task is actually holding a tunnel, since a workspace recorded `active` with no task is the state worth seeing; and it keeps §12.3's three preflight states apart. **Loopback-bound in `vite.config.ts`** — with no auth it is exactly as exposed as the control plane. Includes a **read-only** xterm.js viewer per session, riding the existing `?mode=viewer` attach path, so the browser gets no capability `ourcli connect -mode viewer` did not already have; driving still means the CLI. Not the §11 web client — that one is the Agent SDK against the same sandbox.
 - [ ] Terraform module — runner service, both IAM roles, task definition, VPC endpoint, S3 bucket, and **runner token delivery** (Terraform variable → Secrets Manager → task env; document rotation)
 - [x] **Workspace-runtime driver interface, from day one** — `internal/driver` with the `local` (process) and `docker` (real sandbox image) drivers landed. The `ecs` driver is the remaining implementation. This is the mitigation for the biggest standing risk in §13: once the data plane lives in customer accounts we lose the ability to reproduce failures, so our debugging environment must share a code path with the product — the e2e suite runs the real supervisor binary through the real driver for exactly that reason.
 

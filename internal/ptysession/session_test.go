@@ -335,3 +335,47 @@ func TestMultipleSessionsCoexist(t *testing.T) {
 		t.Errorf("manager holds %d sessions, want 2", n)
 	}
 }
+
+// TestViewerAttachDoesNotResizeTheSession guards the quieter half of section
+// 2.5's viewer rule.
+//
+// The relay and this package both drop a viewer's INPUT, because both attachers
+// write the same PTY stdin and a viewer that can write is silently a co-driver.
+// Size is the same violation wearing a different hat: the PTY has ONE size, so a
+// viewer attaching from a different-sized terminal would reflow the controller's
+// Claude Code -- and a browser viewer, whose size is whatever the window happens
+// to be, would do it every time someone opened the page.
+func TestViewerAttachDoesNotResizeTheSession(t *testing.T) {
+	m := newTestManager(t)
+	s := startShell(t, m, "s1", "sleep 30", 24, 80)
+
+	// A viewer arrives from a very different-sized terminal.
+	a, err := s.Attach(true, 60, 200, true)
+	if err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	defer s.Detach(a)
+	time.Sleep(150 * time.Millisecond) // let the nudge run
+
+	if rows, cols := s.Size(); rows != 24 || cols != 80 {
+		t.Fatalf("viewer resized the session to %dx%d; it must stay 80x24", cols, rows)
+	}
+}
+
+// The controller is still allowed to resize on attach -- that is how a reattach
+// from a differently-sized terminal gets its repaint.
+func TestControllerAttachStillResizes(t *testing.T) {
+	m := newTestManager(t)
+	s := startShell(t, m, "s1", "sleep 30", 24, 80)
+
+	a, err := s.Attach(false, 60, 200, true)
+	if err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	defer s.Detach(a)
+	time.Sleep(150 * time.Millisecond)
+
+	if rows, cols := s.Size(); rows != 60 || cols != 200 {
+		t.Fatalf("controller attach left the session at %dx%d, want 200x60", cols, rows)
+	}
+}

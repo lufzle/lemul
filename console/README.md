@@ -25,11 +25,17 @@ lands the user model.
 ## Shape
 
 ```
-src/lib/control-plane.ts         every call to the Go API, as server functions
-src/routes/index.tsx             status header + workspace table
-src/routes/workspaces.$wid.tsx   sessions, lifecycle actions, preflight report
-src/components/ui.tsx            panel/button/dot, and the auto-refresh hook
+src/lib/control-plane.ts                every call to the Go API, as server functions
+src/routes/index.tsx                    status header + workspace table
+src/routes/workspaces.$wid.tsx          sessions, lifecycle actions, preflight report
+src/routes/workspaces.$wid_.sessions.$sid.tsx   read-only terminal
+src/components/Viewer.tsx               xterm.js over the viewer WebSocket
+src/components/ui.tsx                   panel/button/dot, and the auto-refresh hook
 ```
+
+The viewer route carries the `_` suffix (`$wid_`) so it does **not** nest inside
+the workspace route. Without it `workspaces.$wid.tsx` silently becomes a layout
+and needs an `<Outlet />`, and the child renders as the parent page instead.
 
 **Everything goes through a server function.** TanStack Start route loaders are
 isomorphic — they run in the browser too — so a loader fetching the control plane
@@ -57,10 +63,41 @@ using Bedrock, and only a blocking report is a problem. A failing model shows th
 advice attached to it, since an IAM gap, a missing inference-profile prefix and
 an unfinished First Time Use form all look alike and have nothing in common.
 
+## The read-only viewer
+
+`view` on a running session opens an xterm.js terminal on the existing
+`?mode=viewer` attach path — the same one `ourcli connect -mode viewer` uses, so
+the browser gets no capability the CLI did not already have.
+
+**Read-only is enforced on the server, three times over.** The relay drops input
+frames from a viewer connection and the supervisor drops them again on arrival
+(§2.5), because both attachers write the same PTY stdin and a viewer that can
+write is silently a co-driver. `disableStdin` in the browser is cosmetic — it
+stops the cursor inviting typing, and nothing more.
+
+**It never resizes the session.** The PTY has one size, so honouring the browser
+window would reflow the *controller's* Claude Code. The terminal is built at the
+session's existing geometry and the panel scrolls if that does not fit.
+
+Two things that are true and worth knowing:
+
+- **The WebSocket goes browser → control plane directly**, not through this
+  process. A byte stream cannot usefully be tunnelled through an RPC boundary,
+  and proxying it would put the console on the session data path — the exact
+  position §2.7 spends a phase getting us *out* of. So the viewer needs the
+  control plane reachable from the operator's browser, which on a loopback
+  console it is. Only the JSON API goes through server functions.
+- **Attaching a viewer nudges the session to repaint**, which the person driving
+  it sees as a brief reflow. That is how a late joiner gets the current screen
+  without a VT state model (decision #4); the Phase 2 model removes the need.
+
+This is a *viewer*, not the Phase 4 web client (§11) — that one is the Agent SDK
+against the same sandbox, and a different product surface.
+
 ## What it deliberately does not do
 
-- **No terminal.** Attaching stays in `ourcli`; the console moves the *process*,
-  not your terminal. A browser terminal is Phase 4 (§11) and reopens the
-  `CheckOrigin`/CSRF question `internal/controlplane/server.go` sets aside.
+- **No driving from the browser.** Taking control stays in `ourcli`. Input from
+  the browser would need the CSRF question `internal/controlplane/server.go`
+  currently sets aside (`CheckOrigin` accepts every origin) to be answered first.
 - **No workspace create/delete.** Workspaces are still created on demand by their
   first session; the CRUD API is not built yet.

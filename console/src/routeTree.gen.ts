@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as WorkspacesWidRouteImport } from './routes/workspaces.$wid'
+import { Route as WorkspacesWidSessionsSidRouteImport } from './routes/workspaces.$wid_.sessions.$sid'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -22,31 +23,41 @@ const WorkspacesWidRoute = WorkspacesWidRouteImport.update({
   path: '/workspaces/$wid',
   getParentRoute: () => rootRouteImport,
 } as any)
+const WorkspacesWidSessionsSidRoute =
+  WorkspacesWidSessionsSidRouteImport.update({
+    id: '/workspaces/$wid_/sessions/$sid',
+    path: '/workspaces/$wid/sessions/$sid',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/workspaces/$wid': typeof WorkspacesWidRoute
+  '/workspaces/$wid/sessions/$sid': typeof WorkspacesWidSessionsSidRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/workspaces/$wid': typeof WorkspacesWidRoute
+  '/workspaces/$wid/sessions/$sid': typeof WorkspacesWidSessionsSidRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/workspaces/$wid': typeof WorkspacesWidRoute
+  '/workspaces/$wid_/sessions/$sid': typeof WorkspacesWidSessionsSidRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/workspaces/$wid'
+  fullPaths: '/' | '/workspaces/$wid' | '/workspaces/$wid/sessions/$sid'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/workspaces/$wid'
-  id: '__root__' | '/' | '/workspaces/$wid'
+  to: '/' | '/workspaces/$wid' | '/workspaces/$wid/sessions/$sid'
+  id: '__root__' | '/' | '/workspaces/$wid' | '/workspaces/$wid_/sessions/$sid'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   WorkspacesWidRoute: typeof WorkspacesWidRoute
+  WorkspacesWidSessionsSidRoute: typeof WorkspacesWidSessionsSidRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -65,12 +76,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WorkspacesWidRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/workspaces/$wid_/sessions/$sid': {
+      id: '/workspaces/$wid_/sessions/$sid'
+      path: '/workspaces/$wid/sessions/$sid'
+      fullPath: '/workspaces/$wid/sessions/$sid'
+      preLoaderRoute: typeof WorkspacesWidSessionsSidRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   WorkspacesWidRoute: WorkspacesWidRoute,
+  WorkspacesWidSessionsSidRoute: WorkspacesWidSessionsSidRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

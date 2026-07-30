@@ -199,7 +199,18 @@ func (s *Session) Attach(readOnly bool, rows, cols uint16, repaint bool) (*Attac
 	s.mu.Unlock()
 
 	if repaint {
-		go s.nudge(rows, cols)
+		if readOnly {
+			// A viewer never changes the size. The PTY has exactly one, so
+			// honouring a viewer's terminal would reflow the CONTROLLER's Claude
+			// Code -- the same violation as letting a viewer type, just quieter
+			// (section 2.5). Passing zero makes nudge use the current size, which
+			// takes the cols-1 path: a repaint for the new viewer, no resize for
+			// anyone. It matters most for the browser viewer, whose size is
+			// whatever the window happens to be.
+			go s.nudge(0, 0)
+		} else {
+			go s.nudge(rows, cols)
+		}
 	}
 	return a, nil
 }

@@ -47,8 +47,6 @@ function WorkspaceDetail() {
     }
   }
 
-  const running = sessions.filter((s) => s.status === 'running').length
-
   return (
     <div className="space-y-6">
       <div className="flex items-baseline gap-3">
@@ -69,7 +67,7 @@ function WorkspaceDetail() {
       <Preflight report={preflight} />
 
       <Panel
-        title={`sessions (${sessions.length}, ${running} running)`}
+        title="sessions"
         actions={
           <Button busy={busy === 'new'} onClick={() => act('new', () => createSession({ data: { wid } }))}>
             new session
@@ -115,6 +113,18 @@ function WorkspaceDetail() {
                     <td className="px-2 py-2 text-neutral-400">{s.created_at}</td>
                     <td className="px-2 py-2">
                       <div className="flex justify-end gap-1.5">
+                        {/* Only offered while a process exists: there is no
+                            terminal to watch on a stopped session, and the ring
+                            dies with the PTY. */}
+                        {isRunning ? (
+                          <Link
+                            to="/workspaces/$wid/sessions/$sid"
+                            params={{ wid, sid: s.id }}
+                            className="rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-200 transition hover:bg-neutral-800"
+                          >
+                            view
+                          </Link>
+                        ) : null}
                         {isRunning ? (
                           <Button
                             busy={busy === s.id}
@@ -192,9 +202,7 @@ function Preflight({ report }: { report: Awaited<ReturnType<typeof getPreflight>
   if (r.skipped) {
     return (
       <Panel title="bedrock preflight">
-        <p className="text-sm text-neutral-400">
-          Skipped — this workspace is not using Bedrock. Not the same as “not yet”.
-        </p>
+        <p className="text-sm text-neutral-400">Skipped — this workspace is not using Bedrock.</p>
       </Panel>
     )
   }

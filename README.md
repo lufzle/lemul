@@ -260,8 +260,13 @@ report. See [`console/README.md`](console/README.md).
 
 **It binds to loopback deliberately.** Phase 1 has no auth anywhere, so the
 console is exactly as exposed as the control plane behind it; that is a control
-in `vite.config.ts`, not a default. It has no terminal — attaching stays in
-`ourcli`, because the console moves the *process*, not your terminal.
+in `vite.config.ts`, not a default.
+
+`view` on a running session opens a **read-only** xterm.js terminal on the
+existing `?mode=viewer` attach path — no capability the CLI did not already have,
+with input dropped by the relay *and* the supervisor. It never resizes the
+session, since the PTY has one size and honouring the browser window would reflow
+the controller's Claude Code. Driving still means `ourcli`.
 
 It is served by its own process, not the Go binary. Backing endpoints:
 

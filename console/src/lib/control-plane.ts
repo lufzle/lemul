@@ -131,6 +131,34 @@ export const getPreflight = createServerFn({ method: 'GET' })
     }
   })
 
+export type Endpoint = {
+  transport: string
+  address: string
+  credential: string
+  peer_pubkey?: string
+}
+
+/**
+ * Mints an attach endpoint for the read-only viewer.
+ *
+ * The credential is single-use with a two-minute TTL, so this is fetched per
+ * connection rather than cached -- and it is a POST-style side effect despite
+ * reading like a getter, which is why it is not folded into a route loader that
+ * an auto-refresh would re-run.
+ *
+ * Note what this does NOT do: the WebSocket itself goes browser -> control
+ * plane, not through this process. A byte stream cannot usefully be tunnelled
+ * through an RPC boundary, and proxying it would put the console on the session
+ * data path -- the exact position §2.7 spends a phase getting us out of. So the
+ * viewer needs the control plane reachable from the operator's browser, which on
+ * a loopback console it is.
+ */
+export const getViewerEndpoint = createServerFn({ method: 'POST' })
+  .validator(sid)
+  .handler(async ({ data }) =>
+    api<Endpoint>(`/v1/sessions/${encodeURIComponent(data.sid)}/endpoint`),
+  )
+
 export const createSession = createServerFn({ method: 'POST' })
   .validator(wid)
   .handler(async ({ data }) =>
