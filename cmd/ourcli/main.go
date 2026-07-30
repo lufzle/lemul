@@ -31,25 +31,40 @@ import (
 )
 
 var (
-	server    = flag.String("server", "http://localhost:9000", "control plane base URL")
-	sessionID = flag.String("session", "", "attach to an existing session instead of creating one")
-	mode      = flag.String("mode", "control", "control|viewer")
+	server    *string
+	sessionID *string
+	mode      *string
 )
 
+// main parses the subcommand and its positional argument itself, then hands the
+// rest to the flag package.
+//
+// flag.Parse alone would not do: it stops at the first non-flag argument, so
+// `ourcli connect w1 -session s-123` would silently ignore -session -- and that
+// is precisely the line the detach message tells the user to type.
 func main() {
-	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: ourcli connect <workspace> [flags]\n\n")
-		flag.PrintDefaults()
-	}
-	flag.Parse()
+	fs := flag.NewFlagSet("connect", flag.ExitOnError)
+	server = fs.String("server", "http://localhost:9000", "control plane base URL")
+	sessionID = fs.String("session", "", "attach to an existing session instead of creating one")
+	mode = fs.String("mode", "control", "control|viewer")
 
-	args := flag.Args()
-	if len(args) != 2 || args[0] != "connect" {
-		flag.Usage()
+	usage := func() {
+		fmt.Fprintf(os.Stderr, "usage: ourcli connect <workspace> [flags]\n\n")
+		fs.PrintDefaults()
+	}
+	fs.Usage = usage
+
+	args := os.Args[1:]
+	if len(args) < 2 || args[0] != "connect" || strings.HasPrefix(args[1], "-") {
+		usage()
+		os.Exit(2)
+	}
+	workspace := args[1]
+	if err := fs.Parse(args[2:]); err != nil {
 		os.Exit(2)
 	}
 
-	if err := run(args[1]); err != nil {
+	if err := run(workspace); err != nil {
 		fmt.Fprintf(os.Stderr, "\r\nourcli: %v\r\n", err)
 		os.Exit(1)
 	}
