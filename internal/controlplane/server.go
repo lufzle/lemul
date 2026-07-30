@@ -57,6 +57,9 @@ type Options struct {
 	OTelEndpoint string
 	OTelHeaders  string
 	OTelProtocol string
+	// OTelTraces opts into Claude Code's BETA trace export. Off by default:
+	// higher volume than metrics or events, and beta.
+	OTelTraces bool
 
 	// BedrockPreflight turns on the model check inside each workspace task.
 	// Off means the workspace is not using Bedrock at all (local development

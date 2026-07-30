@@ -684,9 +684,22 @@ check credential *type* before suspecting networking or IAM.
 Full results: [`otel-probe/RESULTS.md`](otel-probe/RESULTS.md). Content is
 genuinely redacted (canary-tested), per-tenant attribution works, cost and
 tool-audit data are sufficient. **The "don't own the client" decision holds.**
-Remaining gaps: managed-settings *enforcement* (test in the Phase 1 image
-build), interactive-only events (`permission_mode_changed`, `source=user_reject`),
-`api_error`/`api_refusal`, traces beta.
+Remaining gaps: interactive-only events (`permission_mode_changed`,
+`source=user_reject`), `api_error`/`api_refusal`.
+
+**Managed-settings enforcement: now verified** (2026-07-30, `otel-stack/`) —
+injecting `OTEL_EXPORTER_OTLP_ENDPOINT` into a running workspace had no effect.
+Redaction re-verified in the same pass (`prompt='<REDACTED>'`, `prompt_length=54`).
+
+**Traces: still nothing.** `OTEL_TRACES_EXPORTER=otlp` plus `always_on` sampling
+renders correctly into managed settings and Claude Code 2.1.220 emits **zero
+spans**. Not a receiver problem — a hand-made OTLP trace POST is accepted.
+Re-check on a CC upgrade.
+
+**Headless runs under-report events.** `claude -p` emits only `user_prompt`;
+`api_request` and `tool_result` fire at end-of-turn and are lost when the process
+exits. Confirmed against a neutral receiver, so it is not the collector. Judge
+telemetry completeness from a long-lived interactive session only.
 
 ### S3 · TUI fidelity — ✅ **PASS, both steps** (2026-07-29)
 Prototype: [`tui-proxy-proto/`](tui-proxy-proto/). **Step 1 (one hop) passes** —

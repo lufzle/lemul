@@ -97,7 +97,23 @@ if [ -n "${LEMUL_OTEL_ENDPOINT:-}" ]; then
   add OTEL_EXPORTER_OTLP_ENDPOINT "$LEMUL_OTEL_ENDPOINT"
   [ -n "${LEMUL_OTEL_HEADERS:-}" ] && add OTEL_EXPORTER_OTLP_HEADERS "$LEMUL_OTEL_HEADERS"
 
-  # Per-tenant attribution is free: every metric and event carries these (5.3).
+  # Traces are BETA in Claude Code and higher volume than metrics or events, so
+  # they are opt-in rather than part of the default telemetry block. The sampler
+  # is pinned explicitly: leaving it to the default risks a low sample rate that
+  # looks like traces are broken rather than sampled.
+  if [ "${LEMUL_OTEL_TRACES:-}" = "1" ]; then
+    add OTEL_TRACES_EXPORTER otlp
+    add OTEL_TRACES_SAMPLER "${LEMUL_OTEL_TRACES_SAMPLER:-always_on}"
+    add OTEL_TRACES_EXPORT_INTERVAL "${LEMUL_OTEL_TRACES_INTERVAL:-5000}"
+  fi
+
+  # Export intervals. The defaults are 60 s for metrics and 5 s for logs (5.5),
+  # which are fine in production but make short-lived processes look like they
+  # emit nothing: a batch still queued when the process exits is simply lost.
+  add OTEL_METRIC_EXPORT_INTERVAL "${LEMUL_OTEL_METRIC_INTERVAL:-10000}"
+  add OTEL_LOGS_EXPORT_INTERVAL "${LEMUL_OTEL_LOGS_INTERVAL:-2000}"
+
+  # Per-tenant attribution is free: every metric, event and span carries these (5.3).
   attrs="tenant.id=${LEMUL_TENANT_ID:-unknown},workspace.id=${LEMUL_WORKSPACE_ID:-unknown}"
   add OTEL_RESOURCE_ATTRIBUTES "$attrs"
 fi

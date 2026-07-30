@@ -28,6 +28,7 @@ func main() {
 		otelEndpoint = flag.String("otel-endpoint", "", "OTLP base URL for workspace telemetry (empty disables it)")
 		otelHeaders  = flag.String("otel-headers", "", "OTLP headers, e.g. Authorization=Basic xxx")
 		otelProtocol = flag.String("otel-protocol", "http/json", "OTLP protocol")
+		otelTraces   = flag.Bool("otel-traces", false, "also export Claude Code's beta traces")
 		bedrockPre   = flag.Bool("bedrock-preflight", false, "workspace tasks check their pinned Bedrock models at start")
 		region       = flag.String("region", "", "AWS region for workspace tasks")
 		pins         = flag.String("pins", "", "comma-separated role=modelID pins; empty uses the defaults")
@@ -59,6 +60,7 @@ func main() {
 		OTelEndpoint:     *otelEndpoint,
 		OTelHeaders:      *otelHeaders,
 		OTelProtocol:     *otelProtocol,
+		OTelTraces:       *otelTraces,
 		BedrockPreflight: *bedrockPre,
 		Region:           *region,
 		Pins:             *pins,

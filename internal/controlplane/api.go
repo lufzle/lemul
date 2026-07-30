@@ -258,6 +258,9 @@ func (s *Server) workspaceEnv() map[string]string {
 		if s.opt.OTelProtocol != "" {
 			env["LEMUL_OTEL_PROTOCOL"] = s.opt.OTelProtocol
 		}
+		if s.opt.OTelTraces {
+			env["LEMUL_OTEL_TRACES"] = "1"
+		}
 	}
 	if s.opt.BedrockPreflight {
 		env["LEMUL_BEDROCK_PREFLIGHT"] = "1"

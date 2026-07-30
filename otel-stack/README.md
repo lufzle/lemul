@@ -72,21 +72,45 @@ to `docker exec` had **no effect** — telemetry still went where managed settin
 said. That is the mechanism the whole "admin-enforced telemetry" claim rests on,
 and it was previously untested.
 
-### The caveat: short-lived processes lose their last batch
+### The caveat: headless runs emit almost nothing
 
 A headless `claude -p` run yields **`user_prompt` and nothing else** — no
-`api_request`, no `tool_result`. The likely reason is ordering against the 5 s
-log export interval: `user_prompt` fires at the *start* of a turn and gets
-flushed while the turn runs, whereas `api_request` and `tool_result` fire at the
-*end* and are still batched when the process exits.
+`api_request`, no `tool_result`, no `tool_decision`.
 
-This is probably not a production problem — real sessions are long-lived PTYs
-that flush continuously — but it does mean **headless testing under-reports the
-audit trail**, so do not use `-p` to judge whether telemetry is complete. S2
-captured the full event set (`otel-probe/RESULTS.md`) from a longer session.
+**This is not an OpenObserve problem.** Pointing Claude Code at the neutral S2
+receiver (`otel-probe`) produced the same single `user_prompt` record, so the
+events are never sent rather than being rejected downstream. Dropping the log
+export interval to 2 s changed nothing.
 
-Worth confirming against a genuinely long interactive session before relying on
-tool-level audit for a customer.
+The likely mechanism is ordering against process exit: `user_prompt` fires at the
+*start* of a turn and flushes while the turn runs, whereas `api_request` and
+`tool_result` fire at the *end* and are still queued when a short-lived process
+exits.
+
+**S2 captured the full event set** (`otel-probe/RESULTS.md`) — using an
+*interactive* `claude`, not `claude -p`. Our product runs long-lived interactive
+PTYs, so this is very likely a headless-testing artefact rather than a production
+gap. But it does mean:
+
+> **Never judge telemetry completeness from a `-p` run.** Attach a real session
+> with `ourcli connect`, work in it for a few minutes, and query then.
+
+### Traces: enabled, but nothing is emitted
+
+`-otel-traces` renders `OTEL_TRACES_EXPORTER=otlp`,
+`OTEL_TRACES_SAMPLER=always_on` and an export interval into managed settings —
+confirmed present in a live workspace. **Claude Code 2.1.220 still produces zero
+spans.**
+
+Ruled out: OpenObserve rejecting them (a hand-made OTLP/JSON `POST /v1/traces`
+returns 200 and creates the stream), sampling (`always_on`), and the export
+interval.
+
+Traces are documented as **beta** (§5), and S2 also listed them as an open gap.
+The most likely explanations are that they need an opt-in beyond the standard
+OTel variable, or that the instrumentation is not wired in this build. Worth
+re-checking on a Claude Code upgrade; not worth chasing further now, since
+metrics and events already cover billing and audit.
 
 ## Two traps that cost time here
 
