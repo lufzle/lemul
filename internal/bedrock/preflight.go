@@ -268,3 +268,78 @@ func modelAccessAdvice(p Pin) string {
 		"Org management account; granted instantly). Write a substantive use-case description -- "+
 		"a denial has NO self-service recovery and needs an AWS support case", p.ModelID)
 }
+
+// ErrorCode returns the AWS error code behind a failure, or "" if the failure
+// was not an API error. The console shows it next to the advice: the advice
+// says what to do, the code is what a customer pastes into a support case.
+func (r Result) ErrorCode() string {
+	if r.Err == nil {
+		return ""
+	}
+	var ae smithy.APIError
+	if errors.As(r.Err, &ae) {
+		return ae.ErrorCode()
+	}
+	return ""
+}
+
+// Retryable reports whether a failure says nothing about configuration.
+//
+// Throttling is the case that matters: it means the check could not reach a
+// verdict, not that access is missing. Treating it as a hard failure would
+// refuse sessions over a transient quota blip and send the customer to fill in
+// a form they already completed.
+func (r Result) Retryable() bool {
+	switch r.ErrorCode() {
+	case "ThrottlingException", "TooManyRequestsException",
+		"ServiceUnavailableException", "InternalServerException",
+		"ModelTimeoutException", "ModelNotReadyException":
+		return true
+	}
+	return false
+}
+
+// Blocking reports whether this result should stop sessions from starting: a
+// required model that failed for a reason that is actually about configuration.
+func (r Result) Blocking() bool {
+	return r.Required && !r.Invocable && !r.Retryable()
+}
+
+// Blocking reports whether any result should stop sessions from starting.
+func (rep Report) Blocking() bool {
+	for _, r := range rep.Results {
+		if r.Blocking() {
+			return true
+		}
+	}
+	return false
+}
+
+// ParsePins accepts "role=modelID" pairs, comma separated.
+//
+// Opus and Haiku are required: Opus is the default model, and Claude Code
+// reaches for Haiku on nearly every turn, so an unusable Haiku degrades every
+// session rather than an occasional one.
+func ParsePins(spec string) ([]Pin, error) {
+	var pins []Pin
+	for _, field := range strings.Split(spec, ",") {
+		field = strings.TrimSpace(field)
+		if field == "" {
+			continue
+		}
+		role, id, ok := strings.Cut(field, "=")
+		if !ok || role == "" || id == "" {
+			return nil, fmt.Errorf("bad pin %q, want role=modelID", field)
+		}
+		switch role {
+		case RoleOpus, RoleSonnet, RoleHaiku:
+		default:
+			return nil, fmt.Errorf("unknown role %q, want opus, sonnet or haiku", role)
+		}
+		pins = append(pins, Pin{Role: role, ModelID: id, Required: role != RoleSonnet})
+	}
+	if len(pins) == 0 {
+		return nil, fmt.Errorf("no pins in %q", spec)
+	}
+	return pins, nil
+}

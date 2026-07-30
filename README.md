@@ -117,6 +117,28 @@ completed the First Time Use form all look similar and have nothing in common.
 Opus and Haiku are required (Claude Code reaches for Haiku on nearly every turn);
 Sonnet only warns.
 
+The same check runs **inside each workspace task**, because the supervisor is the
+only component holding the sandbox task role — the credential sessions actually
+use. A check run anywhere else would test a different principal (§12.3). Turn it
+on with `-bedrock-preflight` on the control plane; the config reaches tasks as
+environment, which is what both drivers pass through.
+
+A blocking verdict refuses session creation with the fix attached, rather than
+letting Claude Code start and then die on the first prompt:
+
+```
+$ curl -X POST localhost:9000/v1/workspaces/w1/sessions
+HTTP 424
+bedrock is not usable in this workspace: us.anthropic.claude-opus-5 (opus) is not
+invocable. the account does not have model access… Submit the Anthropic First Time
+Use form… a denial has NO self-service recovery and needs an AWS support case
+```
+
+`GET /v1/workspaces/{wid}/preflight` serves the structured report for the admin
+console. It blocks on *evidence* of breakage, never on the absence of one: a
+report that never arrives fails open with a loud log, and throttling is reported
+without blocking, since it means the check reached no verdict.
+
 ## Spikes (Phase 0, frozen)
 
 | Path | |

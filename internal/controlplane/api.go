@@ -52,6 +52,16 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Refuse rather than let the failure be discovered inside the PTY. A session
+	// admitted into a workspace whose Bedrock is misconfigured starts Claude Code
+	// successfully and then dies on the user's first prompt, with an error that
+	// says nothing about the First Time Use form (sections 8, 13).
+	if err := s.checkPreflight(ctx, wid); err != nil {
+		log.Printf("refusing session in %s: %v", wid, err)
+		http.Error(w, err.Error(), http.StatusFailedDependency)
+		return
+	}
+
 	sess := store.Session{
 		ID:          "s-" + newSecret()[:12],
 		WorkspaceID: wid,
@@ -202,6 +212,7 @@ func (s *Server) ensureWorkspace(ctx context.Context, wid string) (*registry.Tun
 		Credential:   cred,
 		ControlPlane: s.agentURL(),
 		Image:        s.opt.Image,
+		Env:          s.workspaceEnv(),
 	}, 60*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("dispatch: %w", err)
@@ -225,6 +236,24 @@ func (s *Server) ensureWorkspace(ctx context.Context, wid string) (*registry.Tun
 	ws.Status = store.WorkspaceActive
 	_ = s.st.PutWorkspace(ws)
 	return t, nil
+}
+
+// workspaceEnv is the configuration a workspace task needs, delivered as
+// environment rather than as command-line flags: it is the one mechanism that
+// works identically for a local child process and an ECS task definition, so
+// the two drivers cannot drift apart on how a task is configured.
+func (s *Server) workspaceEnv() map[string]string {
+	env := map[string]string{}
+	if s.opt.BedrockPreflight {
+		env["LEMUL_BEDROCK_PREFLIGHT"] = "1"
+	}
+	if s.opt.Region != "" {
+		env["AWS_REGION"] = s.opt.Region
+	}
+	if s.opt.Pins != "" {
+		env["LEMUL_PINS"] = s.opt.Pins
+	}
+	return env
 }
 
 type endpointResponse struct {

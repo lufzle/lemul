@@ -17,7 +17,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	awscfg "github.com/aws/aws-sdk-go-v2/config"
@@ -35,7 +34,7 @@ func main() {
 	pins := bedrock.DefaultPins()
 	if *pinSpec != "" {
 		var err error
-		if pins, err = parsePins(*pinSpec); err != nil {
+		if pins, err = bedrock.ParsePins(*pinSpec); err != nil {
 			fmt.Fprintln(os.Stderr, "preflight:", err)
 			os.Exit(2)
 		}
@@ -70,28 +69,4 @@ func main() {
 		return
 	}
 	fmt.Println("\npreflight passed")
-}
-
-// parsePins accepts "role=modelID" pairs. Opus and Haiku are required: Opus is
-// the default model, and Claude Code reaches for Haiku on nearly every turn, so
-// an unusable Haiku degrades every session rather than an occasional one.
-func parsePins(spec string) ([]bedrock.Pin, error) {
-	var pins []bedrock.Pin
-	for _, field := range strings.Split(spec, ",") {
-		role, id, ok := strings.Cut(strings.TrimSpace(field), "=")
-		if !ok || role == "" || id == "" {
-			return nil, fmt.Errorf("bad pin %q, want role=modelID", field)
-		}
-		switch role {
-		case bedrock.RoleOpus, bedrock.RoleSonnet, bedrock.RoleHaiku:
-		default:
-			return nil, fmt.Errorf("unknown role %q, want opus, sonnet or haiku", role)
-		}
-		pins = append(pins, bedrock.Pin{
-			Role:     role,
-			ModelID:  id,
-			Required: role != bedrock.RoleSonnet,
-		})
-	}
-	return pins, nil
 }

@@ -23,6 +23,9 @@ func main() {
 		sessionCmd = flag.String("session-cmd", "claude", "command a new session runs (space separated)")
 		startWait  = flag.Duration("start-timeout", 90*time.Second, "how long to wait for a workspace task to dial in")
 		image      = flag.String("image", "", "image passed to the driver (ignored by the local driver)")
+		bedrockPre = flag.Bool("bedrock-preflight", false, "workspace tasks check their pinned Bedrock models at start")
+		region     = flag.String("region", "", "AWS region for workspace tasks")
+		pins       = flag.String("pins", "", "comma-separated role=modelID pins; empty uses the defaults")
 	)
 	flag.Parse()
 	log.SetPrefix("controlplane: ")
@@ -45,6 +48,10 @@ func main() {
 		StartTimeout: *startWait,
 		PublicURL:    pub,
 		Image:        *image,
+
+		BedrockPreflight: *bedrockPre,
+		Region:           *region,
+		Pins:             *pins,
 	})
 
 	srv := &http.Server{

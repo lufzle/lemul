@@ -91,6 +91,10 @@ func (s *Server) handleWorkspaceTunnel(w http.ResponseWriter, r *http.Request) {
 	log.Printf("workspace tunnel up: %s from=%s", wid, r.RemoteAddr)
 	defer func() {
 		s.reg.RemoveWorkspace(t)
+		// Drop the verdict with the task that produced it: a replacement task
+		// must be judged on its own check, not the previous one's. Access is
+		// often granted after a failure, and that is the recovery path.
+		s.preflights.forget(wid)
 		log.Printf("workspace tunnel down: %s", wid)
 	}()
 
@@ -145,6 +149,25 @@ func (s *Server) handleEvent(t *registry.Tunnel, env tunnel.Envelope) {
 		// now proves the reporter works end to end.
 		log.Printf("headroom %s: %d/%d MB free, %d session(s)",
 			h.WorkspaceID, h.MemFreeMB, h.MemLimitMB, h.Sessions)
+	case tunnel.MsgPreflight:
+		var rep tunnel.PreflightReport
+		if err := env.Decode(&rep); err != nil {
+			return
+		}
+		if rep.WorkspaceID == "" {
+			rep.WorkspaceID = t.WorkspaceID
+		}
+		s.preflights.put(rep)
+		switch {
+		case rep.Skipped:
+			log.Printf("workspace %s: bedrock preflight skipped (not using bedrock)", rep.WorkspaceID)
+		case rep.Blocking:
+			m, _ := rep.FirstBlocker()
+			log.Printf("workspace %s: BEDROCK PREFLIGHT FAILED -- %s (%s): %s",
+				rep.WorkspaceID, m.ModelID, m.ErrorCode, m.Advice)
+		default:
+			log.Printf("workspace %s: bedrock preflight ok (%s)", rep.WorkspaceID, rep.Region)
+		}
 	case tunnel.MsgSessionExited:
 		var e tunnel.SessionExited
 		if err := env.Decode(&e); err != nil {

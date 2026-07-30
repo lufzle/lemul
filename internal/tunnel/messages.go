@@ -32,6 +32,7 @@ const (
 	// Agent -> control plane (event stream).
 	MsgHeadroom      = "headroom"
 	MsgSessionExited = "session_exited"
+	MsgPreflight     = "preflight"
 )
 
 // StartWorkspace asks the runner to place one workspace task.
@@ -133,6 +134,53 @@ type SessionExited struct {
 type Resize struct {
 	Rows uint16 `json:"rows"`
 	Cols uint16 `json:"cols"`
+}
+
+// PreflightReport is the supervisor's Bedrock verdict for its workspace.
+//
+// It is deliberately structured rather than a pass/fail flag: the control plane
+// blocks session creation on it AND an admin has to be able to see, in the
+// console, which model failed and what to do about it. "Bedrock is broken" is
+// the unhelpful message the whole preflight exists to replace.
+//
+// It runs in the supervisor because that is the only component holding the
+// sandbox task role -- the credential sessions actually use. A check run
+// anywhere else would be testing a different principal (section 12.3).
+type PreflightReport struct {
+	WorkspaceID string `json:"workspace_id"`
+	Region      string `json:"region,omitempty"`
+	CheckedAt   string `json:"checked_at"`
+	// Skipped is set when the workspace is not using Bedrock at all, as in local
+	// development against a host login. Absence of a report means "not yet";
+	// Skipped means "not applicable", and the two must not be confused.
+	Skipped bool `json:"skipped,omitempty"`
+	// Blocking is true when a required model failed for a reason that is about
+	// configuration. Transient failures (throttling) are reported but do not
+	// block, because they say nothing about whether access is set up.
+	Blocking bool             `json:"blocking"`
+	Models   []PreflightModel `json:"models,omitempty"`
+}
+
+type PreflightModel struct {
+	Role          string `json:"role"`
+	ModelID       string `json:"model_id"`
+	Required      bool   `json:"required"`
+	Authorization string `json:"authorization"`
+	Invocable     bool   `json:"invocable"`
+	ErrorCode     string `json:"error_code,omitempty"`
+	Error         string `json:"error,omitempty"`
+	Advice        string `json:"advice,omitempty"`
+}
+
+// FirstBlocker returns the model whose failure should be shown to a user whose
+// session was refused.
+func (p PreflightReport) FirstBlocker() (PreflightModel, bool) {
+	for _, m := range p.Models {
+		if m.Required && !m.Invocable {
+			return m, true
+		}
+	}
+	return PreflightModel{}, false
 }
 
 // Error is the failure reply on any command stream.

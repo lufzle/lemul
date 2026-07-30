@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/lufzle/lemul-cc/internal/agent"
+	"github.com/lufzle/lemul-cc/internal/bedrock"
 	"github.com/lufzle/lemul-cc/internal/ptysession"
 	"github.com/lufzle/lemul-cc/internal/tunnel"
 )
@@ -34,6 +35,15 @@ type Options struct {
 	NudgeDelay time.Duration
 	// HeadroomInterval is how often resource headroom is reported upward.
 	HeadroomInterval time.Duration
+
+	// BedrockPreflight enables the model check at task start. Off means the
+	// workspace is not using Bedrock -- local development against a host login --
+	// and the report goes up marked skipped rather than being withheld.
+	BedrockPreflight bool
+	// Region for the Bedrock check; empty uses the environment's.
+	Region string
+	// Pins to check; empty uses bedrock.DefaultPins.
+	Pins []bedrock.Pin
 }
 
 // Supervisor implements agent.Handler.
@@ -43,6 +53,9 @@ type Supervisor struct {
 
 	mu     sync.Mutex
 	events net.Conn // nil while disconnected
+
+	preflightOnce sync.Once
+	preflight     tunnel.PreflightReport
 }
 
 func New(o Options) *Supervisor {
@@ -91,6 +104,15 @@ func (s *Supervisor) OnConnect(events net.Conn) error {
 	s.mu.Unlock()
 
 	go s.reportHeadroom(events)
+
+	// Preflight runs after the tunnel is registered, deliberately. A workspace
+	// whose Bedrock is misconfigured must still be visible and diagnosable
+	// rather than silently absent -- the control plane cannot show an admin a
+	// failure it never heard about.
+	go func() {
+		rep := s.preflightReport(context.Background())
+		s.sendEvent(tunnel.MsgPreflight, rep)
+	}()
 	return nil
 }
 

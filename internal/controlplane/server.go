@@ -43,13 +43,23 @@ type Options struct {
 	PublicURL string
 	// Image is passed through to the driver; the local driver ignores it.
 	Image string
+
+	// BedrockPreflight turns on the model check inside each workspace task.
+	// Off means the workspace is not using Bedrock at all (local development
+	// against a host login), and the task reports its check as skipped.
+	BedrockPreflight bool
+	// Region for the workspace task's Bedrock calls.
+	Region string
+	// Pins as "role=modelID" pairs; empty uses the defaults.
+	Pins string
 }
 
 type Server struct {
-	opt   Options
-	reg   *registry.Registry
-	st    store.Store
-	creds *credentials
+	opt        Options
+	reg        *registry.Registry
+	st         store.Store
+	creds      *credentials
+	preflights *preflightStore
 
 	// ensureLocks serialises placement per workspace. Without it two concurrent
 	// session creations would each take a new generation and place a task, and a
@@ -69,10 +79,11 @@ func New(o Options) *Server {
 		o.TenantID = "t1"
 	}
 	return &Server{
-		opt:   o,
-		reg:   registry.New(),
-		st:    o.Store,
-		creds: newCredentials(),
+		opt:        o,
+		reg:        registry.New(),
+		st:         o.Store,
+		creds:      newCredentials(),
+		preflights: newPreflightStore(),
 	}
 }
 
@@ -82,6 +93,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/tunnel/workspace", s.handleWorkspaceTunnel)
 	mux.HandleFunc("POST /v1/workspaces/{wid}/sessions", s.handleCreateSession)
 	mux.HandleFunc("GET /v1/workspaces/{wid}/sessions", s.handleListSessions)
+	mux.HandleFunc("GET /v1/workspaces/{wid}/preflight", s.handlePreflight)
 	mux.HandleFunc("GET /v1/sessions/{sid}/endpoint", s.handleEndpoint)
 	mux.HandleFunc("GET /v1/sessions/{sid}/attach", s.handleAttach)
 	return mux

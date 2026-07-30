@@ -10,11 +10,13 @@ import (
 	"context"
 	"flag"
 	"log"
+	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/lufzle/lemul-cc/internal/bedrock"
 	"github.com/lufzle/lemul-cc/internal/supervisor"
 )
 
@@ -29,9 +31,26 @@ func main() {
 		ringBytes    = flag.Int("ring", 256<<10, "per-session replay ring size in bytes")
 		nudgeDelay   = flag.Duration("nudge-delay", 75*time.Millisecond, "gap between the two resize ioctls on attach")
 		headroomEvry = flag.Duration("headroom-interval", 30*time.Second, "resource headroom reporting interval")
+		// Defaulted from the environment because that is how a task is configured
+		// in both drivers: the local driver passes env to the child, and ECS
+		// passes it through the task definition. Flags stay for running the
+		// supervisor by hand.
+		bedrockPre = flag.Bool("bedrock-preflight", os.Getenv("LEMUL_BEDROCK_PREFLIGHT") != "",
+			"check pinned Bedrock models at task start")
+		region  = flag.String("region", os.Getenv("AWS_REGION"), "AWS region for the Bedrock check")
+		pinSpec = flag.String("pins", os.Getenv("LEMUL_PINS"),
+			"comma-separated role=modelID pins; empty uses the defaults")
 	)
 	flag.Parse()
 	log.SetPrefix("supervisor: ")
+
+	var pins []bedrock.Pin
+	if *pinSpec != "" {
+		var err error
+		if pins, err = bedrock.ParsePins(*pinSpec); err != nil {
+			log.Fatal(err)
+		}
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -46,6 +65,9 @@ func main() {
 		RingBytes:        *ringBytes,
 		NudgeDelay:       *nudgeDelay,
 		HeadroomInterval: *headroomEvry,
+		BedrockPreflight: *bedrockPre,
+		Region:           *region,
+		Pins:             pins,
 	})
 
 	if err := s.Run(ctx); err != nil && ctx.Err() == nil {

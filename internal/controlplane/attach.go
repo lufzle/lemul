@@ -48,6 +48,14 @@ func (s *Server) handleAttach(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Attach carries Create, so it can bring a session process into existence on
+	// its own -- the same gate has to apply here as at session-create, or
+	// reattaching by id would walk straight past it.
+	if err := s.checkPreflight(ctx, sess.WorkspaceID); err != nil {
+		http.Error(w, err.Error(), http.StatusFailedDependency)
+		return
+	}
+
 	mode := r.URL.Query().Get("mode")
 	if mode != tunnel.ModeViewer {
 		mode = tunnel.ModeControl

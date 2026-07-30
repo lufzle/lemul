@@ -327,3 +327,38 @@ func (s *stack) sessionList(workspace string) []sessionDocT {
 func (s *stack) supervisorCount() int {
 	return s.drv.Count()
 }
+
+type preflightResp struct {
+	WorkspaceID string `json:"workspace_id"`
+	Available   bool   `json:"available"`
+	Report      *struct {
+		Region   string `json:"region"`
+		Skipped  bool   `json:"skipped"`
+		Blocking bool   `json:"blocking"`
+		Models   []struct {
+			Role      string `json:"role"`
+			ModelID   string `json:"model_id"`
+			Required  bool   `json:"required"`
+			Invocable bool   `json:"invocable"`
+			Advice    string `json:"advice"`
+		} `json:"models"`
+	} `json:"report"`
+}
+
+func (s *stack) preflight(workspace string) preflightResp {
+	s.t.Helper()
+	resp, err := http.Get(s.baseURL + "/v1/workspaces/" + workspace + "/preflight")
+	if err != nil {
+		s.t.Fatalf("preflight: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		s.t.Fatalf("preflight: %s: %s", resp.Status, body)
+	}
+	var out preflightResp
+	if err := json.Unmarshal(body, &out); err != nil {
+		s.t.Fatalf("preflight: %v", err)
+	}
+	return out
+}

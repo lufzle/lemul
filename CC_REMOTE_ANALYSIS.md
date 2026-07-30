@@ -671,7 +671,7 @@ tenant→process routing does not arise; when it does, it is the Postgres lookup
 
 One workspace, one tenant, IDs hardcoded in config. No auth, no multi-tenancy, no billing, no web UI.
 
-- [x] **Bedrock preflight — three layers, built and validated against real accounts** (`internal/bedrock`, `cmd/preflight`). **Placement is still open — see §12.3:** it cannot live in the runner as written here, because §2.1 denies the runner any Bedrock permission. Three layers, because each catches a different failure:
+- [x] **Bedrock preflight — three layers, in the supervisor and as a standalone binary** (`internal/bedrock`, `cmd/preflight`, §12.3). **Not in the runner:** §2.1 denies the runner any Bedrock permission, and a runner-side check would test the wrong principal anyway. A blocking verdict refuses session creation and attach with the advice attached; the structured report is served at `GET /v1/workspaces/{wid}/preflight` for the admin console. Three layers, because each catches a different failure:
   1. `bedrock:GetFoundationModelAvailability` per configured model — assert **`authorizationStatus == AUTHORIZED`**, not merely that the model is listed. `list-inference-profiles` returning `ACTIVE` is **not** an entitlement check (a test account listed 25 Anthropic profiles `ACTIVE` and could invoke none).
   2. A real minimal `InvokeModel`, since only that proves end-to-end.
   3. Map failures to actionable messages — `NOT_AUTHORIZED` and `Operation not allowed` mean different things and have different fixes.
@@ -745,28 +745,55 @@ Trade-off vs. proxying: structured events, real diffs, approval modals, mobile �
 | 10 | Default session data path | **DECIDED: `relay` + E2E** (§2.7, assumption A2/A3) | Relay-only in v0.1 — assume no customer VPN route. `direct` and `tailnet` deferred but reachable without rework via endpoint negotiation. **Because there is no `direct` escape hatch, E2E is the first Phase 2 item, not a late one** (§1.3). |
 | 11 | Runner replica count in v0.1 | **Design for N, deploy 1** (§2.8) | `desiredCount: 1` self-heals in ~30–60 s and the runner is control-only, so the exposure is "cannot create a workspace" for under a minute. Run 2 in our own test tenant so the multi-tunnel path is exercised. |
 
-### 12.3 Open: where does the Bedrock preflight run? (2026-07-29)
+### 12.3 ~~Where does the Bedrock preflight run?~~ **DECIDED: supervisor, plus a standalone binary for onboarding** (2026-07-29)
 
-§8 puts the Bedrock preflight in **the runner's startup health check**. §2.1 says
+§8 put the Bedrock preflight in **the runner's startup health check**. §2.1 says
 the runner task role holds `ecs:RunTask`/`StopTask` and **cannot call Bedrock**.
 Both cannot be true, and the two-role split is the load-bearing security
-property, so §8 is the side that has to give.
+property, so §8 is the side that gave.
 
-The preflight itself is built and validated (`internal/bedrock`,
-`cmd/preflight`); only its placement is open. Three options:
+The argument that settled it is not about security, though: **a preflight run by
+the runner tests the runner's credentials, not the sandbox's.** Those are
+different principals with different policies, so a runner-side check could come
+back green while every session still fails. Granting the runner Bedrock would
+have bought a check that does not test the thing it claims to — worse than no
+check, because it is a false all-clear.
 
-| Option | Cost |
-|---|---|
-| **a.** Grant the runner read-only availability + a scoped `InvokeModel` | Weakens the clean "the runner cannot call Bedrock" answer in a security review, for a startup check |
-| **b.** Run it in the **supervisor**, which legitimately holds the Bedrock role, and report up the event stream | Free, correct role — but the customer only learns at first session, not at deploy time |
-| **c.** Runner launches a **one-shot preflight task** on the sandbox task definition | Correct role *and* deploy-time feedback; costs one short Fargate task per runner start |
+That leaves the deploy-time signal genuinely worth having but needing a different
+home, and `cmd/preflight` already is one: the customer runs it **before anything
+is deployed**, with their own credentials, catching "this account never did the
+FTU form" before a VPC exists.
 
-**Recommendation: (b) now, (c) when the ECS driver lands.** (b) needs no new IAM
-and is where the credentials already are; (c) restores the deploy-time signal
-without touching the role split, and reuses the same binary.
+| When | Who | Whose credentials | Catches |
+|---|---|---|---|
+| Onboarding, pre-deploy | Customer runs `preflight` by hand | Their own admin creds | Account-level model access — the long-lead failure |
+| Every workspace task start | **Supervisor**, reporting up its event stream | **Sandbox task role** | Everything, with the credential sessions actually use |
+| — | **Runner: nothing** | — | §2.1 intact |
 
-Either way `cmd/preflight` stays a standalone binary, because the onboarding
-runbook needs a customer to run it **before any of our components exist**.
+Rejected: the runner launching a one-shot preflight task on the sandbox task
+definition. It uses the right role and restores deploy-time feedback, but the
+onboarding run covers the same ground for free.
+
+**Behaviour, as built.** A blocking verdict refuses session creation *and*
+attach with the advice attached, rather than letting Claude Code start and then
+die on the user's first prompt. Three rules turned out to matter:
+
+- **Block on evidence, never on its absence.** A report that never arrives — an
+  older supervisor, a bug in our own event path — fails open with a loud log.
+  Only a report that says a required model is unusable fails closed.
+- **Skipped ≠ absent.** A workspace not using Bedrock reports `skipped`, so
+  "not applicable" cannot be confused with "not yet".
+- **Transient ≠ misconfigured.** Throttling means the check reached no verdict;
+  refusing sessions over it would be a self-inflicted outage.
+
+The verdict is dropped when its task's tunnel goes, so a replacement task is
+judged on its own check — access is often granted after a failure, and a stale
+"no" would keep a fixed account looking broken.
+
+Verified end to end against two real accounts (2026-07-29): the denied account
+returns `424` with the FTU instruction and the structured report at
+`GET /v1/workspaces/{wid}/preflight`; the authorized account admits sessions with
+all three pins `AUTHORIZED` and invocable.
 
 ### 12.2 Decision #4, measured (2026-07-29)
 

@@ -306,3 +306,37 @@ func byID(docs []sessionDocT) map[string]sessionDocT {
 	}
 	return m
 }
+
+// Local development does not use Bedrock at all, so the supervisor reports
+// "skipped" rather than staying silent. Absence means "not yet" and skipped
+// means "not applicable"; conflating them would either block every local session
+// or fail open in production.
+func TestPreflightSkippedWhenNotUsingBedrock(t *testing.T) {
+	s := newStack(t, "sh", "-c", `stty raw -echo; echo READY; exec cat`)
+	sid := s.newSession("w1") // must not be refused
+	c := s.attach(sid, 24, 80, "")
+	if got := c.await("READY", 15*time.Second); !strings.Contains(got, "READY") {
+		t.Fatalf("session did not start: %q", got)
+	}
+
+	rep := s.preflight("w1")
+	if !rep.Available {
+		t.Fatal("no preflight report reached the control plane")
+	}
+	if !rep.Report.Skipped {
+		t.Errorf("report should be marked skipped when bedrock is off: %+v", rep.Report)
+	}
+	if rep.Report.Blocking {
+		t.Error("a skipped preflight must never block")
+	}
+}
+
+// The console needs the report even for a workspace that never reported, and it
+// must be able to tell "nothing yet" from "checked and fine".
+func TestPreflightEndpointReportsAbsence(t *testing.T) {
+	s := newStack(t, "sh", "-c", `exec cat`)
+	rep := s.preflight("never-used")
+	if rep.Available {
+		t.Errorf("reported a verdict for a workspace that never ran: %+v", rep.Report)
+	}
+}
