@@ -230,6 +230,27 @@ func advise(err error, authorization string, p Pin) string {
 		return modelAccessAdvice(p)
 	}
 
+	// Message checks come before the code switch, because Bedrock reuses codes
+	// across unrelated causes and the message is the specific part. Verified
+	// against a real account: the same account answers 404 for a model whose use
+	// case form was never submitted and 403 for a model it is simply not offered,
+	// and neither is what those codes usually mean.
+	switch {
+	case strings.Contains(msg, "use case details have not been submitted"),
+		strings.Contains(msg, "use case details form"):
+		// Never submitted, as opposed to submitted and refused. This one is
+		// self-service and quick, so say so rather than mentioning support cases.
+		return fmt.Sprintf("the Anthropic use case details form has never been submitted for this "+
+			"account. Fill it in at Bedrock console -> Model access; it is granted on submission, "+
+			"then allow ~15 minutes to propagate before retrying %s", p.ModelID)
+	case strings.Contains(msg, "not available for this account"):
+		// The account is authorized and the form is done; this specific model is
+		// not offered to it. No form and no IAM change will fix that.
+		return fmt.Sprintf("%s is not offered to this account, which is not a permissions or "+
+			"model-access problem: the form and the IAM policy are irrelevant here. Pin a model the "+
+			"account can use, or contact AWS Sales to have this one enabled", p.ModelID)
+	}
+
 	switch ae.ErrorCode() {
 	case "AccessDeniedException":
 		// Two very different failures share this code, and they are told apart

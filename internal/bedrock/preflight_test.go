@@ -228,3 +228,58 @@ func TestDefaultPinsMarkSonnetOptional(t *testing.T) {
 		}
 	}
 }
+
+// Bedrock reuses error codes across unrelated causes, so the message has to be
+// consulted before the code. Both of these were found against a real account
+// (112324749796) that answered them for different models in the same run, and
+// both were mapped to the wrong fix before that.
+
+// A 404 whose message is about the use case form is NOT "wrong region", and the
+// fix is self-service rather than a support case -- this account had simply
+// never submitted the form.
+func TestUseCaseFormNeverSubmittedIsNotAPinProblem(t *testing.T) {
+	inv := &fakeInvoke{err: apiErr("ResourceNotFoundException",
+		"Model use case details have not been submitted for this account. Fill out the Anthropic "+
+			"use case details form before using the model. If you have already filled out the form, "+
+			"try again in 15 minutes.")}
+
+	rep := preflight(context.Background(), nil, inv, "us-east-2", []Pin{
+		{Role: RoleHaiku, ModelID: "us.anthropic.claude-haiku-4-5-20251001-v1:0", Required: true},
+	})
+	a := rep.Results[0].Advice
+	if strings.Contains(a, "wrong region") || strings.Contains(a, "pin is wrong") {
+		t.Errorf("a use-case-form failure was reported as a region or pin problem:\n  %s", a)
+	}
+	if !strings.Contains(a, "use case details form") {
+		t.Errorf("advice does not name the form:\n  %s", a)
+	}
+	if !strings.Contains(a, "15 minutes") {
+		t.Errorf("advice omits the propagation delay, which invites a false retry:\n  %s", a)
+	}
+	if strings.Contains(a, "support case") {
+		t.Errorf("a never-submitted form is self-service; advice should not mention support:\n  %s", a)
+	}
+}
+
+// A 403 saying the model is not offered to this account is not a model-access
+// problem: no form and no IAM change fixes it.
+func TestModelNotOfferedIsNotAModelAccessProblem(t *testing.T) {
+	avail := &fakeAvail{status: types.AuthorizationStatusAuthorized}
+	inv := &fakeInvoke{err: apiErr("AccessDeniedException",
+		"anthropic.claude-opus-5 is not available for this account. You can explore other available "+
+			"models on Amazon Bedrock. For additional access options, contact AWS Sales")}
+
+	rep := preflight(context.Background(), avail, inv, "us-east-2", []Pin{
+		{Role: RoleOpus, ModelID: "us.anthropic.claude-opus-5", Required: true},
+	})
+	a := rep.Results[0].Advice
+	if strings.Contains(a, "First Time Use") {
+		t.Errorf("a not-offered model was reported as missing model access:\n  %s", a)
+	}
+	if strings.Contains(a, "task role") {
+		t.Errorf("a not-offered model was reported as an IAM problem:\n  %s", a)
+	}
+	if !strings.Contains(a, "not offered") {
+		t.Errorf("advice does not say the model is unavailable to the account:\n  %s", a)
+	}
+}
