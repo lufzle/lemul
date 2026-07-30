@@ -223,6 +223,26 @@ func newSecret() string {
 	return hex.EncodeToString(b)
 }
 
+// newSessionID mints a session id as a v4 UUID.
+//
+// The format is not cosmetic. Claude Code's --session-id requires a valid UUID,
+// and adopting it makes our session id BE the conversation id rather than
+// something mapped to one. Three things fall out: resume needs no lookup table;
+// the id survives a resume (2.1.220 reuses it -- only --fork-session mints a new
+// one), which section 2.4 wants for vertical migration; and the workaround in
+// section 12.4 goes away, since the gateway's own Session ID field and OTel's
+// session.id now carry our id directly.
+//
+// Hand-rolled rather than pulling in a dependency for sixteen bytes.
+func newSessionID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant RFC 4122
+	h := hex.EncodeToString(b[:])
+	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
+}
+
 // mintWorkspace replaces the workspace's credential. Minting on every placement
 // means a credential from a previous generation cannot register the new task.
 func (c *credentials) mintWorkspace(wid string) string {

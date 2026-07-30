@@ -12,6 +12,9 @@
 //	POST /v1/workspaces/{wid}/sessions     create a session, starting the task
 //	GET  /v1/sessions/{sid}/endpoint       where should the client connect?
 //	GET  /v1/sessions/{sid}/attach         the client's WebSocket
+//	POST /v1/sessions/{sid}/stop           Ctrl-C/Ctrl-D semantics
+//	POST /v1/sessions/{sid}/resume         start the process again, resuming
+//	DELETE /v1/sessions/{sid}              end it and drop the conversation
 package controlplane
 
 import (
@@ -113,6 +116,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/workspaces/{wid}/preflight", s.handlePreflight)
 	mux.HandleFunc("GET /v1/sessions/{sid}/endpoint", s.handleEndpoint)
 	mux.HandleFunc("GET /v1/sessions/{sid}/attach", s.handleAttach)
+	mux.HandleFunc("POST /v1/sessions/{sid}/stop", s.handleStopSession)
+	mux.HandleFunc("POST /v1/sessions/{sid}/resume", s.handleResumeSession)
+	mux.HandleFunc("DELETE /v1/sessions/{sid}", s.handleDeleteSession)
 	return mux
 }
 

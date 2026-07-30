@@ -9,9 +9,9 @@ decisions) before changing anything structural. Every non-obvious choice in this
 code has a rationale there, and the comments cite it by section.
 
 **Status: Phase 0 complete. Phase 1 substantially done** — the split, sandbox
-image, both local drivers, gateway inference, preflight and telemetry all work end
-to end. Remaining: the `ecs` driver + Terraform, and session lifecycle
-(stop/resume, idle, warm hold, admission gating).
+image, both local drivers, gateway inference, preflight, telemetry and session
+lifecycle (stop/resume/delete) all work end to end. Remaining: the `ecs` driver +
+Terraform, and idle detection / warm hold / admission gating.
 
 ## Components
 
@@ -74,7 +74,14 @@ ourcli connect <workspace> -new          always start a new session
 ourcli connect <workspace> -session <id> attach to a specific session
 ourcli connect <workspace> -mode viewer  read-only; input is dropped
 ourcli ls <workspace>                    what is in there, and who is on it
+ourcli stop   <workspace> -session <id>  Ctrl-C/Ctrl-D; the conversation is kept
+ourcli resume <workspace> -session <id>  start it again, history intact
+ourcli rm     <workspace> -session <id>  end it and drop the conversation
 ```
+
+`-session` takes any **unique prefix**. Session ids are UUIDs because Claude
+Code's `--session-id` requires one, which is worth the length: our id *is* the
+conversation id, so nothing maps between them (§12.7).
 
 Bare `connect` reattaches only to a session **nobody is attached to**. Both
 attachers write the same PTY stdin (§2.5), so joining an in-use session by
@@ -118,6 +125,12 @@ run — only the placement substrate differs. Managed settings are rendered at
 container start from environment, not baked, because one image has to serve both
 a Bedrock workspace and local development against a host login (`-host-login`
 mounts your Claude credentials in; never use it for a Bedrock workspace).
+
+The entrypoint also seeds Claude Code's **first-run state**. A workspace task
+starts with an empty `CLAUDE_CONFIG_DIR`, so without it the first thing a user
+sees is the onboarding theme picker, with the per-directory trust prompt behind
+it blocking every tool call. Seeded by merge, never overwrite, so a workspace
+that comes back keeps whatever the user chose.
 
 Container naming carries the idempotency key, so the container runtime itself
 enforces one task per workspace generation.
@@ -213,7 +226,29 @@ without blocking, since it means the check reached no verdict.
 | `winch-probe/` | Does Claude Code repaint fully on SIGWINCH? Gates decision #4 — see its `RESULTS.md` |
 | `litellm-spike/` | Does Claude Code work through a gateway, and do header tags partition cost? Validates decision #12 |
 
+## Session lifecycle
+
+Compute, process and client presence are three independent axes (§2.4). These
+move the **process** axis only — stopping a session leaves the workspace task up,
+because a sibling session may still be working in it.
+
+```
+POST   /v1/sessions/{sid}/stop     Ctrl-C/Ctrl-D; ?force=1 is SIGKILL
+POST   /v1/sessions/{sid}/resume   starts the process with NO client attached
+DELETE /v1/sessions/{sid}          ends it and drops the conversation
+```
+
+Stop keeps the record, because the conversation outlives the process. Resume is a
+verb rather than a side effect of attaching, since a console has to be able to
+put an agent back to work without becoming its terminal. Delete refuses a running
+session without `?force=1` — it is the one unrecoverable verb.
+
+Whether a resumed session gets `--resume` or `--session-id` is decided **by the
+supervisor, from the workspace volume**, never by a control-plane flag: the two
+flags fail in each other's case, and a replacement task's disk is empty while any
+flag we stored would still say "started". §12.7 has the measurements.
+
 ## Not yet built
 
-The `ecs` driver and Terraform · session stop/resume, idle detection, warm hold,
-admission control gating · workspace CRUD. Tracked as the §8 checklist.
+The `ecs` driver and Terraform · idle detection, warm hold, admission control
+gating · workspace CRUD. Tracked as the §8 checklist.

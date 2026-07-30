@@ -10,6 +10,9 @@
 //	ourcli connect <workspace> -new          # always a new session
 //	ourcli connect <workspace> -session <id> # a specific session
 //	ourcli ls <workspace>                    # what is running in there
+//	ourcli stop <workspace> -session <id>    # Ctrl-C/Ctrl-D; conversation kept
+//	ourcli resume <workspace> -session <id>  # start it again, history intact
+//	ourcli rm <workspace> -session <id>      # end it and drop the conversation
 package main
 
 import (
@@ -51,9 +54,15 @@ func main() {
 	mode = fs.String("mode", "control", "control|viewer")
 	forceNew = fs.Bool("new", false, "always start a new session, never reattach")
 
+	force := fs.Bool("force", false, "stop: SIGKILL rather than SIGHUP. rm: delete even if running")
+
 	usage := func() {
 		fmt.Fprintf(os.Stderr, "usage: ourcli connect <workspace> [flags]\n")
-		fmt.Fprintf(os.Stderr, "       ourcli ls <workspace> [flags]\n\n")
+		fmt.Fprintf(os.Stderr, "       ourcli ls      <workspace>\n")
+		fmt.Fprintf(os.Stderr, "       ourcli stop    <workspace> -session <id>\n")
+		fmt.Fprintf(os.Stderr, "       ourcli resume  <workspace> -session <id>\n")
+		fmt.Fprintf(os.Stderr, "       ourcli rm      <workspace> -session <id> [-force]\n\n")
+		fmt.Fprintf(os.Stderr, "-session accepts any unique prefix of a session id.\n\n")
 		fs.PrintDefaults()
 	}
 	fs.Usage = usage
@@ -74,6 +83,18 @@ func main() {
 		err = run(workspace)
 	case "ls":
 		err = runList(workspace)
+	case "stop", "resume":
+		if *sessionID == "" {
+			err = fmt.Errorf("%s needs -session <id>; `ourcli ls %s` lists them", cmd, workspace)
+			break
+		}
+		err = postSession(workspace, *sessionID, cmd, *force)
+	case "rm":
+		if *sessionID == "" {
+			err = fmt.Errorf("rm needs -session <id>; `ourcli ls %s` lists them", workspace)
+			break
+		}
+		err = deleteSession(workspace, *sessionID, *force)
 	default:
 		usage()
 		os.Exit(2)

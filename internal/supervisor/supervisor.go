@@ -33,7 +33,12 @@ type Options struct {
 	Token        string
 	// DefaultCmd runs when an attach asks to create a session without naming one.
 	DefaultCmd []string
-	Term       string
+	// ConfigDir is Claude Code's CLAUDE_CONFIG_DIR, where conversations are
+	// filed. Empty resolves it the way Claude Code does. It has to sit on the
+	// workspace volume -- that is what lets a conversation outlive its process
+	// and makes resume mean anything (section 2.4).
+	ConfigDir string
+	Term      string
 	RingBytes  int
 	NudgeDelay time.Duration
 	// HeadroomInterval is how often resource headroom is reported upward.
@@ -210,14 +215,115 @@ func (s *Supervisor) OnStream(stream net.Conn) {
 	switch env.Type {
 	case tunnel.MsgAttach:
 		s.handleAttach(stream, env)
+	case tunnel.MsgStartSession:
+		s.handleStartSession(stream, env)
 	case tunnel.MsgStopSession:
 		s.handleStopSession(stream, env)
+	case tunnel.MsgDeleteSession:
+		s.handleDeleteSession(stream, env)
 	case tunnel.MsgListSessions:
 		s.handleListSessions(stream)
 	default:
 		replyError(stream, "unknown message type "+env.Type)
 		_ = stream.Close()
 	}
+}
+
+// createSession forks one session's process. Shared by attach-with-Create and by
+// the start_session verb, so a session resumed from a console and one resumed by
+// connecting a terminal get identical treatment -- including the argv.
+func (s *Supervisor) createSession(id string, cmd []string, term string, rows, cols uint16) (*ptysession.Session, error) {
+	if len(cmd) == 0 {
+		cmd = s.opt.DefaultCmd
+	}
+	if term == "" {
+		term = s.opt.Term
+	}
+	// Resume decided here, from the disk this process is standing on, rather than
+	// from anything the control plane remembers (see claudeargs.go).
+	cmd = sessionArgs(cmd, id, s.opt.ConfigDir)
+
+	// The proxy has to exist before the fork: its URL goes into the child's
+	// environment, and a child that started without it would talk to nothing.
+	env, err := s.sessionEnv(id, term)
+	if err != nil {
+		return nil, err
+	}
+	sess, err := s.mgr.Create(ptysession.Spec{
+		ID:   id,
+		Cmd:  cmd,
+		Env:  env,
+		Rows: rows,
+		Cols: cols,
+	})
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("session %s created: %v size=%dx%d", sess.ID, cmd, cols, rows)
+	return sess, nil
+}
+
+func (s *Supervisor) handleStartSession(stream net.Conn, env tunnel.Envelope) {
+	defer func() { _ = stream.Close() }()
+	var req tunnel.StartSession
+	if err := env.Decode(&req); err != nil {
+		replyError(stream, err.Error())
+		return
+	}
+	if req.SessionID == "" {
+		replyError(stream, "missing session_id")
+		return
+	}
+	// Idempotent: resuming a session that is already running is what a user gets
+	// for double-clicking, and it must not be an error or a second process.
+	if sess, ok := s.mgr.Get(req.SessionID); ok {
+		rows, cols := sess.Size()
+		_ = tunnel.WriteMsg(stream, tunnel.MsgOK, tunnel.SessionInfo{
+			ID:        sess.ID,
+			Rows:      rows,
+			Cols:      cols,
+			Attachers: sess.Attachers(),
+			StartedAt: sess.StartedAt.UTC().Format(time.RFC3339),
+		})
+		return
+	}
+	sess, err := s.createSession(req.SessionID, req.Cmd, req.Term, 0, 0)
+	if err != nil {
+		replyError(stream, err.Error())
+		return
+	}
+	rows, cols := sess.Size()
+	_ = tunnel.WriteMsg(stream, tunnel.MsgOK, tunnel.SessionInfo{
+		ID:        sess.ID,
+		Rows:      rows,
+		Cols:      cols,
+		StartedAt: sess.StartedAt.UTC().Format(time.RFC3339),
+	})
+}
+
+// handleDeleteSession ends a session and drops its conversation.
+//
+// The stop is forced and waited on before the transcript goes: Claude Code
+// flushes to the transcript as it runs, so unlinking underneath a live process
+// races it into recreating the file, leaving a session that was reported deleted
+// but resumes anyway.
+func (s *Supervisor) handleDeleteSession(stream net.Conn, env tunnel.Envelope) {
+	defer func() { _ = stream.Close() }()
+	var req tunnel.DeleteSession
+	if err := env.Decode(&req); err != nil {
+		replyError(stream, err.Error())
+		return
+	}
+	if sess, ok := s.mgr.Get(req.SessionID); ok {
+		_ = sess.Stop(true)
+		sess.Wait()
+	}
+	if err := removeTranscript(s.opt.ConfigDir, req.SessionID); err != nil {
+		replyError(stream, err.Error())
+		return
+	}
+	log.Printf("session %s deleted (process stopped, conversation dropped)", req.SessionID)
+	_ = tunnel.WriteMsg(stream, tunnel.MsgOK, nil)
 }
 
 func (s *Supervisor) handleStopSession(stream net.Conn, env tunnel.Envelope) {
@@ -275,35 +381,13 @@ func (s *Supervisor) handleAttach(stream net.Conn, env tunnel.Envelope) {
 			replyError(stream, "no such session: "+req.SessionID)
 			return
 		}
-		cmd := req.Cmd
-		if len(cmd) == 0 {
-			cmd = s.opt.DefaultCmd
-		}
-		term := req.Term
-		if term == "" {
-			term = s.opt.Term
-		}
-		// The proxy has to exist before the fork: its URL goes into the child's
-		// environment, and a child that started without it would talk to nothing.
-		env, gerr := s.sessionEnv(req.SessionID, term)
-		if gerr != nil {
-			replyError(stream, gerr.Error())
-			return
-		}
 		var err error
-		sess, err = s.mgr.Create(ptysession.Spec{
-			ID:   req.SessionID,
-			Cmd:  cmd,
-			Env:  env,
-			Rows: req.Rows,
-			Cols: req.Cols,
-		})
+		sess, err = s.createSession(req.SessionID, req.Cmd, req.Term, req.Rows, req.Cols)
 		if err != nil {
 			replyError(stream, err.Error())
 			return
 		}
 		created = true
-		log.Printf("session %s created: %v size=%dx%d", sess.ID, cmd, req.Cols, req.Rows)
 	}
 
 	// No repaint for the attach that created the PTY: the child has

@@ -328,6 +328,95 @@ func (s *stack) supervisorCount() int {
 	return s.drv.Count()
 }
 
+// post drives a session lifecycle verb and returns the status and body, so a
+// test can assert on the code rather than only on the happy path.
+func (s *stack) post(path string) (int, string) {
+	s.t.Helper()
+	resp, err := http.Post(s.baseURL+path, "application/json", nil)
+	if err != nil {
+		s.t.Fatalf("post %s: %v", path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, strings.TrimSpace(string(body))
+}
+
+func (s *stack) del(path string) (int, string) {
+	s.t.Helper()
+	req, err := http.NewRequest(http.MethodDelete, s.baseURL+path, nil)
+	if err != nil {
+		s.t.Fatalf("delete %s: %v", path, err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		s.t.Fatalf("delete %s: %v", path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, strings.TrimSpace(string(body))
+}
+
+// sessionStatus reports one session's process state, or "" if the record is gone.
+func (s *stack) sessionStatus(workspace, sid string) string {
+	s.t.Helper()
+	for _, d := range s.sessionList(workspace) {
+		if d.ID == sid {
+			return d.Status
+		}
+	}
+	return ""
+}
+
+// awaitStatus polls until a session reaches want. Stopping is asynchronous --
+// the signal goes down the tunnel and the child exits in its own time -- so
+// asserting immediately after the call would be a flake.
+func (s *stack) awaitStatus(workspace, sid, want string, d time.Duration) string {
+	s.t.Helper()
+	deadline := time.Now().Add(d)
+	for {
+		got := s.sessionStatus(workspace, sid)
+		if got == want || time.Now().After(deadline) {
+			return got
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// fakeClaude writes a script named `claude` that reports the argv it was given
+// and then blocks on stdin the way a TUI does.
+//
+// Named `claude` deliberately: the supervisor only rewrites argv when the command
+// basename says it is Claude Code, so a probe called anything else would test the
+// wrong branch.
+func fakeClaude(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "claude")
+	script := "#!/bin/sh\necho \"ARGV:$*:\"\ncat\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// transcriptPresent reports whether a conversation is on the volume.
+func transcriptPresent(configDir, sessionID string) bool {
+	m, err := filepath.Glob(filepath.Join(configDir, "projects", "*", sessionID+".jsonl"))
+	return err == nil && len(m) > 0
+}
+
+// writeTranscript fakes a conversation already on the workspace volume.
+func writeTranscript(t *testing.T, configDir, sessionID string) {
+	t.Helper()
+	dir := filepath.Join(configDir, "projects", "-workspace-project")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, sessionID+".jsonl"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 type preflightResp struct {
 	WorkspaceID string `json:"workspace_id"`
 	Available   bool   `json:"available"`

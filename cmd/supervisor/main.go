@@ -27,7 +27,9 @@ func main() {
 		workspaceID  = flag.String("workspace", "w1", "workspace id")
 		token        = flag.String("token", "", "workspace-scoped tunnel credential")
 		defaultCmd   = flag.String("cmd", "claude", "default command for a new session (space separated)")
-		termName     = flag.String("term", "xterm-256color", "TERM for children")
+		configDir    = flag.String("config-dir", os.Getenv("CLAUDE_CONFIG_DIR"),
+			"Claude Code config dir holding conversations; empty resolves it as Claude Code does")
+		termName = flag.String("term", "xterm-256color", "TERM for children")
 		ringBytes    = flag.Int("ring", 256<<10, "per-session replay ring size in bytes")
 		nudgeDelay   = flag.Duration("nudge-delay", 75*time.Millisecond, "gap between the two resize ioctls on attach")
 		headroomEvry = flag.Duration("headroom-interval", 30*time.Second, "resource headroom reporting interval")
@@ -66,6 +68,7 @@ func main() {
 		WorkspaceID:      *workspaceID,
 		Token:            *token,
 		DefaultCmd:       strings.Fields(*defaultCmd),
+		ConfigDir:        *configDir,
 		Term:             *termName,
 		RingBytes:        *ringBytes,
 		NudgeDelay:       *nudgeDelay,

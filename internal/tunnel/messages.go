@@ -17,9 +17,11 @@ const (
 	MsgStopWorkspace  = "stop_workspace"
 
 	// Control plane -> supervisor.
-	MsgAttach       = "attach"       // attach stream: becomes a PTY byte pipe on success
-	MsgStopSession  = "stop_session" // command stream
-	MsgListSessions = "list_sessions"
+	MsgAttach        = "attach"        // attach stream: becomes a PTY byte pipe on success
+	MsgStartSession  = "start_session" // command stream
+	MsgStopSession   = "stop_session"  // command stream
+	MsgDeleteSession = "delete_session"
+	MsgListSessions  = "list_sessions"
 	// MsgResize travels on an established attach stream, not a command stream.
 	// Terminal size cannot ride in the byte stream, so it needs its own channel:
 	// the supervisor turns it into ioctl(TIOCSWINSZ) -> SIGWINCH.
@@ -93,10 +95,35 @@ type AttachOK struct {
 	Created   bool   `json:"created"`
 }
 
+// StartSession brings a session's process back without attaching a client.
+//
+// Attach carries Create and could fork the PTY too, but only as a side effect of
+// someone connecting. Resume is a distinct verb because the process axis and the
+// client-presence axis are independent (2.4): an admin console resuming an
+// overnight run, or `ourcli resume`, must be able to start the agent working
+// without becoming its terminal.
+//
+// No size travels here. With no attacher there is no client size to honour, so
+// the PTY takes the 24x80 default and the first attach corrects it through the
+// resize it already sends -- which also delivers the repaint. That is the one
+// case where starting at a default size is right rather than the 4.1 trap.
+type StartSession struct {
+	SessionID string   `json:"session_id"`
+	Cmd       []string `json:"cmd,omitempty"`
+	Term      string   `json:"term,omitempty"`
+}
+
 // StopSession applies Ctrl-C/Ctrl-D semantics to a running session (2.4).
 type StopSession struct {
 	SessionID string `json:"session_id"`
 	Force     bool   `json:"force,omitempty"` // SIGKILL rather than SIGHUP
+}
+
+// DeleteSession ends a session and drops its conversation from the workspace
+// volume (2.6). Destructive and not recoverable: the transcript is the session's
+// memory, so this is the difference between "stop" and "forget".
+type DeleteSession struct {
+	SessionID string `json:"session_id"`
 }
 
 // SessionList is the reply to MsgListSessions.

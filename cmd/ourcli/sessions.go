@@ -64,6 +64,44 @@ func runList(workspace string) error {
 	return w.Flush()
 }
 
+// resolveSession turns what the user typed into a session id, accepting a unique
+// prefix.
+//
+// Session ids are UUIDs because Claude Code's --session-id demands one and we
+// adopted its format so that ours IS the conversation id. That is the right
+// trade, but it leaves the user with 36 characters to retype from a detach
+// message, so a prefix that matches exactly one session is enough.
+//
+// An ambiguous prefix is an error rather than a guess: the sessions in a
+// workspace are different conversations, and picking one for the user would at
+// best waste their time and at worst stop the wrong agent run.
+func resolveSession(workspace, want string) (string, error) {
+	sessions, err := listSessions(workspace)
+	if err != nil {
+		// Fall back to using it verbatim. A control plane that cannot list should
+		// still let an operator act on an id they already have in full.
+		return want, nil
+	}
+	var matches []string
+	for _, s := range sessions {
+		if s.ID == want {
+			return want, nil // exact match always wins over any prefix
+		}
+		if strings.HasPrefix(s.ID, want) {
+			matches = append(matches, s.ID)
+		}
+	}
+	switch len(matches) {
+	case 1:
+		return matches[0], nil
+	case 0:
+		return "", fmt.Errorf("no session in workspace %q matches %q", workspace, want)
+	default:
+		return "", fmt.Errorf("%q matches %d sessions in workspace %q: %s",
+			want, len(matches), workspace, strings.Join(matches, ", "))
+	}
+}
+
 // pickSession decides what `ourcli connect <workspace>` should attach to.
 //
 //	an unattended running session  -> reattach to the newest one
@@ -101,4 +139,62 @@ func pickSession(workspace string) (sid string, reattached bool, err error) {
 	}
 	sid, err = createSession(workspace)
 	return sid, false, err
+}
+
+// postSession drives one lifecycle verb against a session (section 2.4). The
+// process axis only: stopping a session leaves the workspace task running, since
+// a sibling session may still be working in it.
+func postSession(workspace, want, verb string, force bool) error {
+	sid, err := resolveSession(workspace, want)
+	if err != nil {
+		return err
+	}
+	u := strings.TrimRight(*server, "/") + "/v1/sessions/" + neturl.PathEscape(sid) + "/" + verb
+	if force {
+		u += "?force=1"
+	}
+	resp, err := http.Post(u, "application/json", nil)
+	if err != nil {
+		return fmt.Errorf("%s: %w", verb, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("%s: %s: %s", verb, resp.Status, strings.TrimSpace(string(body)))
+	}
+	switch verb {
+	case "stop":
+		fmt.Printf("session %s stopped (resume with: ourcli resume %s -session %s)\n", sid, workspace, sid)
+	case "resume":
+		fmt.Printf("session %s resumed (attach with: ourcli connect %s -session %s)\n", sid, workspace, sid)
+	}
+	return nil
+}
+
+// deleteSession ends a session and drops its conversation. Unlike stop, this is
+// not recoverable -- the transcript is the session's memory.
+func deleteSession(workspace, want string, force bool) error {
+	sid, err := resolveSession(workspace, want)
+	if err != nil {
+		return err
+	}
+	u := strings.TrimRight(*server, "/") + "/v1/sessions/" + neturl.PathEscape(sid)
+	if force {
+		u += "?force=1"
+	}
+	req, err := http.NewRequest(http.MethodDelete, u, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("delete: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("delete: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	fmt.Printf("session %s deleted; its conversation is gone\n", sid)
+	return nil
 }

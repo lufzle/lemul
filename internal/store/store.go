@@ -52,6 +52,7 @@ type Store interface {
 	GetSession(id string) (Session, error)
 	PutSession(s Session) error
 	ListSessions(workspaceID string) ([]Session, error)
+	DeleteSession(id string) error
 }
 
 type state struct {
@@ -166,6 +167,16 @@ func (m *Memory) PutSession(s Session) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.st.Sessions[s.ID] = s
+	return m.flush()
+}
+
+// DeleteSession drops the record. Idempotent: deleting an already-deleted
+// session is the same outcome the caller asked for, and a retried DELETE must
+// not turn into a 404.
+func (m *Memory) DeleteSession(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.st.Sessions, id)
 	return m.flush()
 }
 

@@ -157,6 +157,34 @@ if [ -n "${LEMUL_OTEL_ENDPOINT:-}" ]; then
   add OTEL_RESOURCE_ATTRIBUTES "$attrs"
 fi
 
+# --- First-run state --------------------------------------------------------
+# Claude Code opens on an interactive onboarding wizard (the theme picker) and,
+# separately, a per-directory trust prompt that blocks every tool call until it
+# is answered. A workspace task starts with an empty CLAUDE_CONFIG_DIR, so
+# without this the FIRST thing a user sees after `ourcli connect` is a setup
+# wizard rather than Claude Code -- and neither question is theirs to answer
+# here: the theme belongs to the terminal emulator on their own machine, and the
+# workspace directory is one we created for them.
+#
+# Merged, and only where a value is absent. The config dir lives on the
+# workspace volume, so a workspace that comes back must keep whatever the user
+# set for themselves rather than having it reset on every placement.
+CONFIG_DIR=${CLAUDE_CONFIG_DIR:-/workspace/.claude}
+CONFIG=$CONFIG_DIR/.claude.json
+PROJECT_DIR=${LEMUL_PROJECT_DIR:-/workspace}
+mkdir -p "$CONFIG_DIR"
+[ -f "$CONFIG" ] || printf '{}' > "$CONFIG"
+seeded=$(jq --arg p "$PROJECT_DIR" '
+    .hasCompletedOnboarding = (.hasCompletedOnboarding // true)
+  | .theme                  = (.theme // "dark")
+  | .projects               = (.projects // {})
+  | .projects[$p]           = ((.projects[$p] // {})
+      | .hasTrustDialogAccepted        = (.hasTrustDialogAccepted // true)
+      | .hasCompletedProjectOnboarding = (.hasCompletedProjectOnboarding // true))
+' "$CONFIG") && printf '%s' "$seeded" > "$CONFIG"
+chmod 0600 "$CONFIG"
+echo "entrypoint: seeded first-run state for $PROJECT_DIR" >&2
+
 printf '%s' "$env_json" | jq '{env: .}' > "$SETTINGS"
 chmod 0644 "$SETTINGS"
 

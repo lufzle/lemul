@@ -63,7 +63,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sess := store.Session{
-		ID:          "s-" + newSecret()[:12],
+		ID:          newSessionID(),
 		WorkspaceID: wid,
 		CreatedAt:   time.Now().UTC(),
 	}

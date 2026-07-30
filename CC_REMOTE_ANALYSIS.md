@@ -28,9 +28,9 @@ Remote, sandboxed Claude Code workspaces, multi-tenant, running in the customer'
 
 **Status: Phase 0 complete. Phase 1 substantially done — the runner/supervisor
 split, sandbox image, `local`+`docker` drivers, gateway inference with a
-per-session loopback broker, Bedrock preflight and telemetry all work end to end
-against real accounts. Remaining: the `ecs` driver + Terraform, and the session
-lifecycle group (stop/resume, idle, warm hold, admission gating).**
+per-session loopback broker, Bedrock preflight, telemetry and session
+stop/resume/delete all work end to end against real accounts. Remaining: the
+`ecs` driver + Terraform, and idle detection / warm hold / admission gating.**
 
 ---
 
@@ -762,7 +762,7 @@ One workspace, one tenant, IDs hardcoded in config. No auth, no multi-tenancy, n
 - [x] Sandbox image — [`image/`](image/). CC pinned at 2.1.220, supervisor and preflight baked in, `ncurses-term` + git/ripgrep/jq, `.mcp.json` template. **No tmux.** Managed settings are **rendered at container start from environment, not baked**: the same image has to serve a Bedrock workspace and local development against a host login, and those need different settings — baking them would mean two images, which is the drift the driver interface exists to prevent.
 - [x] Supervisor — **multi-PTY manager** (one per session, §2.3), resize channel, resource-headroom reporter (`internal/ptysession`, `internal/supervisor`). Idle reporter still outstanding — it needs the OTel signal below.
 - [x] **Detach/reattach without tmux or a VT model** (decision #4): (a) the child now outlives client disconnect — that *is* detach; (b) bounded replay ring per session (~256 KB); (c) SIGWINCH nudge on reattach; **(d) mode prelude** — replay the terminal-mode negotiation, which the repaint does *not* restore. The repaint assumption is **measured, not assumed** (§12.2, `winch-probe/RESULTS.md`): full-viewport repaint confirmed, and (d) was the finding that fell out of it. The ring turned out to be polish rather than correctness.
-- [ ] Session lifecycle — stop (Ctrl-C/Ctrl-D semantics) / resume via `claude --resume <id>`; conversation persists on the workspace volume (§2.4)
+- [x] **Session lifecycle** — `POST /v1/sessions/{sid}/stop`, `POST …/resume`, `DELETE /v1/sessions/{sid}`, and `ourcli stop|resume|rm` (§2.4, §2.6). Stop is Ctrl-C/Ctrl-D semantics and keeps the record; resume starts the process **without attaching a client**, which is why it is a verb rather than a side effect of attach; delete drops the conversation and refuses a running session without `?force=1`. Session ids became **UUIDs** and the supervisor chooses `--resume` or `--session-id` from the workspace volume — see §12.7, which is load-bearing and not obvious.
 - [ ] Admission control at session-create — `max_sessions` and `min_free_memory_mb` policies (§2.4). **Refuse with a clear error; never let OOM be the discovery mechanism.** *(The supervisor already reports headroom up the tunnel; the control plane logs it but does not yet gate on it.)*
 - [ ] Idle detection — four local conditions, **no OTel dependency**: no client attached AND no recent PTY output AND no recent gateway requests AND **no tool executing** (§2.4). The tool check is what stops a one-hour build being reaped, since it produces neither output nor model calls; mind that MCP servers are long-lived children and need a start-time baseline to tell apart. OTel refines it where deployed. Per-session opt-out.
 - [ ] Warm hold (~5 min) before scaling a workspace task to zero (§2.4)
@@ -944,7 +944,9 @@ reason to notice a gap.
 > enforcement. **End User** takes our *user id* via header, and that header
 > **beats** Claude Code's own `metadata.user_id` (CC otherwise fills the field
 > with a device/account blob). **Session ID** is Claude Code's own, so our session
-> id goes in a tag. Binding workspace→team needs admin access to the customer's
+> id goes in a tag. *(Superseded 2026-07-30 by §12.7: our session id is now the
+> UUID Claude Code files the conversation under, so the two are one value and the
+> tag corroborates rather than maps.)* Binding workspace→team needs admin access to the customer's
 > gateway, so it must be opt-in rather than default — see the provisioning
 > tension in the spike results.
 
@@ -1213,12 +1215,88 @@ OOM risk in §2.4, since subagents are what multiply memory use.
 - **`CLAUDE_CODE_PLUGIN_SEED_DIR`** pre-populates plugins into a container image,
   which is exactly the sandbox-image case.
 - **`CLAUDE_CODE_RESUME_INTERRUPTED_TURN`** + `CLAUDE_CODE_RESUME_PROMPT` +
-  `..._MAX_AGE_MS` are the machinery for §2.4 session resume, including a bound
-  so a restart does not re-run a stale prompt.
+  `CLAUDE_CODE_RESUME_INTERRUPTED_TURN_MAX_AGE_MS` (full name verified in the
+  2.1.220 binary) re-issue a turn that was cut off mid-flight, with a bound so a
+  restart does not re-run a stale prompt. **They are a refinement on resume, not
+  resume itself** — §12.7 is the mechanism, and none of these are needed for a
+  conversation to come back. Four undocumented siblings are also present and
+  unexplored: `CLAUDE_CODE_RESUME_FROM_SESSION`, `..._SOURCE_ALIVE`,
+  `..._THRESHOLD_MINUTES`, `..._TOKEN_THRESHOLD`.
 - **`CLAUDE_CODE_RETRY_WATCHDOG`** retries capacity errors indefinitely for
   unattended sessions — directly relevant to overnight agent runs.
 - **`CLAUDE_CODE_SESSION_ID`** is set in Bash/hook subprocesses; combined with
   `CLAUDE_PID` it correlates a subprocess back to its session.
+
+### 12.7 Session identity and resume, measured (2026-07-30)
+
+§2.4 said resume is `claude --resume <id>`. That is right but incomplete, and the
+missing half is sharp enough to be worth its own record.
+
+**The measurement.** Against the pinned 2.1.220, the two session flags are
+complementary and **each fails in the other's case**:
+
+| argv | conversation exists | conversation absent |
+|---|---|---|
+| `--session-id <u>` | `Session ID … is already in use` | starts fresh ✅ |
+| `--resume <u>` | resumes it, **reusing the same id** ✅ | `No conversation found with session ID: …` |
+
+Either mistake exits the child immediately, so this is not a degraded session, it
+is a dead one — with an error about session ids that reads as our bug.
+
+**Consequence 1: our session ids are UUIDs.** `--session-id` requires one. Rather
+than mint an id and map it to Claude Code's, we adopted the format so that **our
+session id *is* the conversation id**. Verified in a real interactive container
+session: the transcript is filed as `<our id>.jsonl`. Three things fall out —
+no mapping table for resume; the id survives a resume (`--resume` reuses it, only
+`--fork-session` mints a new one), which is the stability §2.4 wants for vertical
+migration; and §12.4's tag workaround collapses, since the gateway's own Session
+ID field and OTel's `session.id` now carry our id directly.
+
+**Consequence 2: the supervisor decides, not the control plane.** The choice
+depends on whether a transcript is on the workspace volume, and only the
+supervisor is standing on it. A control-plane "has started before" flag would be
+actively wrong: decision #3 puts the workspace on Fargate **ephemeral disk**, so a
+replacement task comes up with the flag true and the transcript gone, and every
+resume in that workspace would fail. Same argument that moved the Bedrock
+preflight in §12.3 — check with the thing you are actually asking about.
+
+The probe **globs** `$CLAUDE_CONFIG_DIR/projects/*/<id>.jsonl` rather than
+deriving the directory. Claude Code names that directory from the mangled working
+directory (`/workspace` became `-workspace`), and reproducing that mangling would
+couple us to an internal scheme with no stable contract; the glob couples us only
+to "the transcript is `<id>.jsonl` somewhere under `projects/`". It fails safe:
+a false negative means we pass `--session-id`, and the session dies loudly at
+start rather than silently losing the conversation.
+
+**The rewrite is gated on the command being Claude Code.** The create path runs
+whatever `-session-cmd` names, and the e2e suite drives it with `cat` and `sh`.
+
+**Resume is a verb, not a side effect of attach.** Attach could fork the PTY
+itself, but only when someone connects. The process axis and the client-presence
+axis are independent (§2.4), so `POST …/resume` starts the agent with **no client
+attached** — which is what an admin console, and the auto-stop cascade, need.
+
+**Verified end to end** in the docker image against the gateway: plant a fact →
+detach → `stop` (process gone, record kept, argv had been `--session-id`) →
+`resume` (argv now `--resume`, running with 0 attachers) → reattach → the model
+recalled the fact from before the stop, from a single transcript.
+
+#### Two traps found while verifying
+
+- **A fresh workspace opened on Claude Code's onboarding wizard.** A workspace
+  task starts with an empty `CLAUDE_CONFIG_DIR`, so the first thing a user saw
+  after `ourcli connect` was the theme picker — and behind it the per-directory
+  trust prompt, which blocks every tool call until answered. Neither question is
+  the user's to answer here. `image/entrypoint.sh` now seeds
+  `hasCompletedOnboarding`, `theme` and the project's `hasTrustDialogAccepted`,
+  **merging rather than overwriting** so a returning workspace keeps whatever the
+  user set. This would have hit the very first customer.
+- **Driving the TUI from a script needs Enter sent separately.** Claude Code
+  enables bracketed paste (`ESC[?2004h`), so text and a trailing `\r` arriving in
+  one burst are read as a pasted multi-line block: the prompt gains a newline and
+  nothing is submitted. It looks exactly like the model failing to respond. Send
+  the text, pause, then send `\r` alone. Also beware asserting on output that
+  echoes your own prompt — two of my matches were the echo, not the reply.
 
 ### 12.1 Questions for the first customer conversation
 
