@@ -200,6 +200,17 @@ func (s *Server) ensureWorkspace(ctx context.Context, wid string) (*registry.Tun
 	if err != nil {
 		return nil, err
 	}
+	// Carry the new generation on our own copy before writing it back. `ws` was
+	// read before the increment, so every PutWorkspace below would otherwise
+	// restore the pre-increment value and the counter could never leave 0.
+	//
+	// That is not a cosmetic drift. The generation is what the ECS RunTask
+	// client-token is derived from (§2.8), so a counter stuck at 0 makes two
+	// genuinely different placements share one idempotency key -- and ECS
+	// answers the second with the FIRST task, which by then is the stopped one
+	// we are replacing. The workspace would simply never come back. It survives
+	// on the docker driver only because removing a container frees its name.
+	ws.Generation = gen
 	cred := s.creds.mintWorkspace(wid)
 
 	ws.Status = store.WorkspaceStarting

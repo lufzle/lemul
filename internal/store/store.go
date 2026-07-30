@@ -15,6 +15,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 )
@@ -45,6 +46,7 @@ type Session struct {
 type Store interface {
 	GetWorkspace(id string) (Workspace, error)
 	PutWorkspace(w Workspace) error
+	ListWorkspaces() ([]Workspace, error)
 	// NextGeneration increments and persists the workspace's generation,
 	// returning the new value. Every placement must go through it.
 	NextGeneration(id string) (uint64, error)
@@ -136,6 +138,19 @@ func (m *Memory) PutWorkspace(w Workspace) error {
 	defer m.mu.Unlock()
 	m.st.Workspaces[w.ID] = w
 	return m.flush()
+}
+
+// ListWorkspaces returns every workspace, ordered by id so a console rendering
+// them does not reshuffle rows between polls.
+func (m *Memory) ListWorkspaces() ([]Workspace, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]Workspace, 0, len(m.st.Workspaces))
+	for _, w := range m.st.Workspaces {
+		out = append(out, w)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
 }
 
 func (m *Memory) NextGeneration(id string) (uint64, error) {

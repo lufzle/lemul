@@ -248,6 +248,29 @@ supervisor, from the workspace volume**, never by a control-plane flag: the two
 flags fail in each other's case, and a replacement task's disk is empty while any
 flag we stored would still say "started". §12.7 has the measurements.
 
+## Operator console
+
+```bash
+cd console && bun install && bun run dev     # http://127.0.0.1:3000
+```
+
+TanStack Start (SSR) over the control plane's JSON API — workspace and task
+state, sessions with their lifecycle buttons, and the structured preflight
+report. See [`console/README.md`](console/README.md).
+
+**It binds to loopback deliberately.** Phase 1 has no auth anywhere, so the
+console is exactly as exposed as the control plane behind it; that is a control
+in `vite.config.ts`, not a default. It has no terminal — attaching stays in
+`ourcli`, because the console moves the *process*, not your terminal.
+
+It is served by its own process, not the Go binary. Backing endpoints:
+
+```
+GET /v1/status                     runner count and what this control plane does
+GET /v1/workspaces                 records, plus whether a task is really connected
+GET /v1/workspaces/{wid}
+```
+
 ## Not yet built
 
 The `ecs` driver and Terraform · idle detection, warm hold, admission control
