@@ -853,6 +853,16 @@ reason to notice a gap.
 > dominate; and LiteLLM appends its own tags, so aggregation must filter rather
 > than trust. Still unvalidated: the loopback proxy binding itself, streaming, and
 > whether a gateway restores WebSearch.
+>
+> **Attribution mapping, tested:** LiteLLM's **Team ID** takes our *workspace id*
+> via the virtual key's team binding — the only **unforgeable** binding, since the
+> session never sees which key the proxy uses, and it unlocks per-workspace budget
+> enforcement. **End User** takes our *user id* via header, and that header
+> **beats** Claude Code's own `metadata.user_id` (CC otherwise fills the field
+> with a device/account blob). **Session ID** is Claude Code's own, so our session
+> id goes in a tag. Binding workspace→team needs admin access to the customer's
+> gateway, so it must be opt-in rather than default — see the provisioning
+> tension in the spike results.
 
 **The mechanism already exists.** Claude Code 2.1.220 supports pointing at any
 Anthropic-Messages-compatible endpoint, verified by inspecting the shipped binary:

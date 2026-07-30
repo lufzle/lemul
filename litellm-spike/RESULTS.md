@@ -60,6 +60,56 @@ including cache-token fields.
 That is exactly the attribution decision #12 wants, achieved without touching the
 request body.
 
+## The attribution model, tested
+
+LiteLLM exposes three identity fields, and they are populated by three *different*
+mechanisms — which matters, because only one of them is unforgeable by the session.
+
+| LiteLLM field | Populate with | How | Forgeable by the session? |
+|---|---|---|---|
+| **Team ID** | our **workspace id** | the **virtual key's** team binding | **No** — the proxy chooses the key |
+| **End User** | our **user id** | `x-litellm-end-user-id` header | Only if the session can set the header |
+| **Session ID** | *Claude Code's* session id | CC's own `metadata` block | n/a — CC's, not ours |
+| Tags | our session id, anything else | `x-litellm-tags` header | Only if the session can set the header |
+
+Verified with a key bound to a team:
+
+```
+team_id    = 394b877d-8109-43bf-88f9-542783ed4f41   (from the key)
+end_user   = dario                                  (from the header)
+session_id = 6d99ce78-…                             (not ours)
+```
+
+**Our `end_user` header beats Claude Code's `metadata.user_id`.** Tested with both
+present in the same request; the header won. Without that, the field would be
+unusable — Claude Code fills it with its own JSON blob
+(`{"device_id":…,"account_uuid":…,"session_id":…}`).
+
+**Session ID is Claude Code's, not ours.** Which is arguably useful — it
+correlates a spend row to a specific CC conversation — but our session id has to
+live in a tag.
+
+**Team-via-key is the only unforgeable binding**, because the session never sees
+which key the supervisor's proxy uses. It also unlocks LiteLLM's per-team budgets
+and rate limits, so a workspace could carry a spend cap enforced at the gateway.
+
+### The provisioning tension this creates
+
+Binding workspace → team means creating a team and a key per workspace, which
+requires **admin access to the customer's gateway**. That cuts against the
+posture that we hold no credentials inside their environment, so it should not be
+the default:
+
+- **Default — customer issues one key.** Attribution via `end_user` and tags
+  only. No admin access, no provisioning step. Loses per-workspace budget
+  *enforcement*; keeps per-workspace *reporting*.
+- **Opt-in — we provision teams and keys.** Requires a gateway admin credential,
+  and buys enforceable per-workspace budgets and revocation scoped to one
+  workspace.
+
+Worth deciding per customer rather than globally, and it belongs with the
+per-tenant configuration work in Phase 3.
+
 ## Findings worth carrying forward
 
 **Spend tracking requires Postgres.** Without `DATABASE_URL`, `/spend/logs`
