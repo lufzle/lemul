@@ -11,7 +11,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -234,7 +233,7 @@ func attach(fd int, sid string, ep endpoint) error {
 		for {
 			n, err := os.Stdin.Read(buf)
 			if n > 0 {
-				if idx := bytes.IndexByte(buf[:n], escapeByte); idx >= 0 {
+				if idx := detachIndex(buf[:n]); idx >= 0 {
 					if idx > 0 {
 						_ = c.WriteBytes(buf[:idx])
 					}
@@ -294,7 +293,3 @@ func attach(fd int, sid string, ep endpoint) error {
 		}
 	}
 }
-
-// escapeByte detaches the client without sending anything to the remote.
-// Ctrl-] is the classic telnet escape and is not bound by Claude Code.
-const escapeByte = 0x1d

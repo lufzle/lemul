@@ -17,6 +17,7 @@ cmd/ourcli          the user's local client. Raw mode, WSS, Ctrl-] to detach
 cmd/controlplane    the only public listener: orchestrator API + relay
 cmd/runner          one per tenant, in their VPC. CONTROL ONLY, never on the data path
 cmd/supervisor      one per workspace task. Owns N PTYs, dials out on its own tunnel
+cmd/keyprobe        diagnostic: what bytes does your terminal send for a key?
 ```
 
 The runner/supervisor split is decision #6, *task-dials-out*. The runner places
@@ -63,6 +64,15 @@ bin/ourcli connect w1
 
 `ourcli` prints the session id on detach; reattach with
 `bin/ourcli connect w1 -session <id>`.
+
+Detach is `Ctrl-]`. The client recognises all three encodings a terminal may use
+for it — the legacy `0x1d`, kitty `CSI 93;5u`, and modifyOtherKeys
+`CSI 27;5;93~` — because Claude Code negotiates modes that stop emulators
+sending the legacy one. `bin/keyprobe -cc` prints what your terminal actually
+produces if detach ever stops working.
+
+Pick a port nothing squats on. `9222` is Chrome DevTools and will silently win
+for `localhost`, the same way OrbStack takes 4318.
 
 The runner places the supervisor through the `local` driver, so this is the same
 code path the ECS driver will take — only the placement substrate differs.
