@@ -68,6 +68,38 @@ done
 # child, because a value in managed settings would reach every session -- and
 # Claude Code's Bash tool inherits the environment, so that is every command the
 # agent runs. The credential stays in the supervisor process.
+#
+# What DOES belong here are the behaviours Claude Code changes when it detects a
+# non-first-party endpoint. Several default OFF behind a gateway and their
+# absence looks like our bug rather than a default (§12.6).
+if [ -n "${LEMUL_GATEWAY_URL:-}" ]; then
+  # Off by default on gateway connections. Without it a large tool input -- a long
+  # file write, say -- arrives only once fully generated, which reads as the TUI
+  # hanging. That would land on us as "the proxy is buffering".
+  add CLAUDE_CODE_ENABLE_FINE_GRAINED_TOOL_STREAMING 1
+
+  # When a streaming request fails mid-stream, Claude Code retries non-streaming.
+  # Behind a proxy that can replay a partially-processed request, the retry
+  # produces DUPLICATE TOOL EXECUTION -- the same command run twice. Defensive.
+  add CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK 1
+
+  # Trace context only propagates to a custom base URL when asked, and every
+  # session's traffic goes through our loopback broker.
+  add CLAUDE_CODE_PROPAGATE_TRACEPARENT 1
+
+  # Situational, so opt-in rather than assumed:
+  #   pins are gateway ALIASES, which Claude Code cannot recognise as
+  #   effort-capable, so the effort parameter is dropped unless forced
+  [ "${LEMUL_GATEWAY_FORCE_EFFORT:-}" = "1" ] && add CLAUDE_CODE_ALWAYS_ENABLE_EFFORT 1
+  #   context window cannot be inferred from an alias either
+  [ -n "${LEMUL_GATEWAY_CONTEXT_TOKENS:-}" ] && add CLAUDE_CODE_MAX_CONTEXT_TOKENS "$LEMUL_GATEWAY_CONTEXT_TOKENS"
+  #   only if the gateway rejects anthropic-beta headers or caches on the body
+  [ "${LEMUL_GATEWAY_NO_BETAS:-}" = "1" ] && add CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS 1
+  [ "${LEMUL_GATEWAY_NO_ATTRIBUTION:-}" = "1" ] && add CLAUDE_CODE_ATTRIBUTION_HEADER 0
+  #   populates /model from the gateway; off by default because a shared key
+  #   would otherwise show every user every model the key can reach
+  [ "${LEMUL_GATEWAY_MODEL_DISCOVERY:-}" = "1" ] && add CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY 1
+fi
 
 # --- Bedrock (DRAFT -- not the supported path) ------------------------------
 # Direct-to-Bedrock is deferred: the task role is reachable from any process in

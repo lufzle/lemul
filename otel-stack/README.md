@@ -37,7 +37,11 @@ infrastructure for audit rather than a dependency (§5).
 
 ## What arrives
 
-**Metrics — confirmed working.** `claude_code_cost_usage`,
+**Events and metrics — confirmed working** over `http/protobuf`. A handful of
+turns produces `api_request`, `assistant_response`, `user_prompt`, `tool_result`
+and `tool_decision` in the `default` logs stream.
+
+**Metrics.** `claude_code_cost_usage`,
 `claude_code_token_usage`, `claude_code_active_time_total`,
 `claude_code_session_count`, each carrying `tenant_id`, `workspace_id`, `model`
 and Claude Code's own `session_id`.
@@ -95,22 +99,36 @@ gap. But it does mean:
 > **Never judge telemetry completeness from a `-p` run.** Attach a real session
 > with `ourcli connect`, work in it for a few minutes, and query then.
 
+### Use `http/protobuf`, not `http/json`
+
+OpenObserve's OTLP **JSON** parser rejects part of Claude Code's payload:
+
+```
+OTLPExporterError: Bad Request 400
+"Invalid json: invalid type: map, expected f64 at line 1 column 1676"
+```
+
+Some payloads got through and some didn't, so telemetry looked partially broken
+rather than misconfigured. `http/protobuf` produces zero errors and is now the
+default.
+
+This was invisible until `CLAUDE_CODE_OTEL_DIAG_STDERR=1` — exporter failures are
+otherwise swallowed unless you run with `--debug`. It is on by default in the
+image for exactly this reason.
+
 ### Traces: enabled, but nothing is emitted
 
 `-otel-traces` renders `OTEL_TRACES_EXPORTER=otlp`,
-`OTEL_TRACES_SAMPLER=always_on` and an export interval into managed settings —
-confirmed present in a live workspace. **Claude Code 2.1.220 still produces zero
-spans.**
+`OTEL_TRACES_SAMPLER=always_on`, an export interval and
+`CLAUDE_CODE_PROPAGATE_TRACEPARENT` into managed settings — all confirmed present
+in a live workspace, now over protobuf with no exporter errors. **Claude Code
+2.1.220 still produces zero spans.**
 
-Ruled out: OpenObserve rejecting them (a hand-made OTLP/JSON `POST /v1/traces`
-returns 200 and creates the stream), sampling (`always_on`), and the export
-interval.
-
-Traces are documented as **beta** (§5), and S2 also listed them as an open gap.
-The most likely explanations are that they need an opt-in beyond the standard
-OTel variable, or that the instrumentation is not wired in this build. Worth
-re-checking on a Claude Code upgrade; not worth chasing further now, since
-metrics and events already cover billing and audit.
+Ruled out: the receiver (a hand-made OTLP trace POST is accepted and creates the
+stream), sampling, export interval, the JSON parser, and trace-context
+propagation. Traces are documented as **beta** (§5) and S2 also listed them as an
+open gap. Re-check on a Claude Code upgrade; metrics and events already cover
+billing and audit.
 
 ## Two traps that cost time here
 

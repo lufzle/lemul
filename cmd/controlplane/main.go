@@ -27,7 +27,10 @@ func main() {
 		gatewayKey   = flag.String("gateway-key", "", "gateway credential (never reaches a session)")
 		otelEndpoint = flag.String("otel-endpoint", "", "OTLP base URL for workspace telemetry (empty disables it)")
 		otelHeaders  = flag.String("otel-headers", "", "OTLP headers, e.g. Authorization=Basic xxx")
-		otelProtocol = flag.String("otel-protocol", "http/json", "OTLP protocol")
+		// protobuf, not json: OpenObserve's OTLP JSON parser rejects part of
+		// Claude Code's payload with `invalid type: map, expected f64`, and the
+		// failure is silent without CLAUDE_CODE_OTEL_DIAG_STDERR.
+		otelProtocol = flag.String("otel-protocol", "http/protobuf", "OTLP protocol")
 		otelTraces   = flag.Bool("otel-traces", false, "also export Claude Code's beta traces")
 		bedrockPre   = flag.Bool("bedrock-preflight", false, "workspace tasks check their pinned Bedrock models at start")
 		region       = flag.String("region", "", "AWS region for workspace tasks")
