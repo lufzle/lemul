@@ -250,6 +250,15 @@ func (s *Server) workspaceEnv() map[string]string {
 		// from every child environment (see strippedFromChild).
 		env["LEMUL_GATEWAY_KEY"] = s.opt.GatewayKey
 	}
+	if s.opt.OTelEndpoint != "" {
+		env["LEMUL_OTEL_ENDPOINT"] = s.opt.OTelEndpoint
+		if s.opt.OTelHeaders != "" {
+			env["LEMUL_OTEL_HEADERS"] = s.opt.OTelHeaders
+		}
+		if s.opt.OTelProtocol != "" {
+			env["LEMUL_OTEL_PROTOCOL"] = s.opt.OTelProtocol
+		}
+	}
 	if s.opt.BedrockPreflight {
 		env["LEMUL_BEDROCK_PREFLIGHT"] = "1"
 	}

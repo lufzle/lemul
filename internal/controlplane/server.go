@@ -50,6 +50,14 @@ type Options struct {
 	GatewayURL string
 	GatewayKey string
 
+	// OTel* configure Claude Code's telemetry, rendered into managed settings by
+	// the image entrypoint so a session cannot override or silence it (§5.2).
+	// Empty endpoint means no telemetry: audit signals are optional
+	// infrastructure, not a dependency (§5).
+	OTelEndpoint string
+	OTelHeaders  string
+	OTelProtocol string
+
 	// BedrockPreflight turns on the model check inside each workspace task.
 	// Off means the workspace is not using Bedrock at all (local development
 	// against a host login), and the task reports its check as skipped.
