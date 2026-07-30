@@ -136,10 +136,20 @@ matters because **Claude Code's Bash tool inherits the environment** — anythin
 left there is handed to every command the agent runs, including ones the model
 wrote.
 
-One listener per session is also what makes cost attribution trustworthy: the
-port-to-session mapping is the supervisor's own bookkeeping, so a session cannot
-forge it. Verified from inside a sandbox — a call with a forged credential *and*
-forged tags was recorded by the gateway as the correct workspace and session.
+**Be precise about what this buys.** The session can still *see* that base URL and
+call the proxy — anything in the sandbox can. What it cannot do is take the
+credential anywhere: a loopback port on an ephemeral number dies with the
+session, whereas a leaked `sk-…` works from anywhere, indefinitely, for every
+workspace. And every call through the proxy is tagged with the workspace and
+session from the supervisor's own port mapping, so **unattributed spend is not
+possible** — verified from inside a sandbox, where a call carrying a forged
+credential *and* forged tags was still recorded against the correct workspace and
+session.
+
+The capability is deliberately not fenced off: the agent legitimately has
+inference and runs arbitrary code, so a Bash command can always just ask Claude
+Code for a completion. What bounds it is a per-workspace budget at the gateway
+(§12.4), not the proxy.
 
 ## Checking an AWS account
 

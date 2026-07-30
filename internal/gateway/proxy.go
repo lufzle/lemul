@@ -17,6 +17,17 @@
 // port-to-session mapping is the supervisor's own bookkeeping, not something the
 // agent can influence. A per-session header would be forgeable, because it would
 // have to live in the session's environment to get there.
+//
+// What this does NOT do is stop the session using the proxy. ANTHROPIC_BASE_URL
+// is visible to every process in the sandbox, so a Bash command can call this
+// port and get a completion. That is deliberate rather than a gap: the agent
+// legitimately has inference and legitimately runs arbitrary code, so it could
+// always just ask Claude Code for one. The property being bought is narrower and
+// still worth having -- an exfiltratable, unattributable capability becomes a
+// non-exfiltratable, always-attributed one. A loopback port on an ephemeral
+// number is useless outside the container and dies with the session, and every
+// call through it is tagged whoever makes it. Spend is bounded by a per-workspace
+// budget at the gateway, not by this proxy.
 package gateway
 
 import (

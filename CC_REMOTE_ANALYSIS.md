@@ -928,6 +928,42 @@ immediate and independent "agent is working" indicator. §2.4's idle detection
 currently rests entirely on OTel `active_time.total{type=cli}`; this backstops it
 with no new instrumentation.
 
+#### What the proxy does NOT protect — state this precisely
+
+The credential is out of reach, but **the capability is not**. `ANTHROPIC_BASE_URL`
+is visible to the session, and anything in the sandbox can call that loopback
+port and get inference. Demonstrated: a `curl` from inside a running container
+returned a completion.
+
+That is not a gap to fix; it is the boundary being soft by construction. The
+agent legitimately has inference and legitimately runs arbitrary code, so a Bash
+command that wants a completion can simply ask Claude Code for one. A perfect
+process check would not change that.
+
+What the proxy actually converts:
+
+| | key in the session env | brokered by the proxy |
+|---|---|---|
+| Credential exfiltratable | **yes** — works anywhere, indefinitely, for every workspace | **no** — `127.0.0.1:<ephemeral>`, dies with the session |
+| Session can spend | yes | yes |
+| Spend can be **unattributed** | **yes** | **no** — every call is tagged workspace + session |
+
+So the honest claim is: **an exfiltratable, unattributable capability becomes a
+non-exfiltratable, always-attributed one.** Not "the session cannot reach the
+gateway."
+
+Tightening it further was considered and rejected as theatre: UID checks fail
+because Bash shares Claude Code's UID; a shared secret fails because Claude Code
+receives it via the environment the session reads; and `SO_PEERCRED` peer-PID
+verification needs a Unix domain socket, while `ANTHROPIC_BASE_URL` requires an
+`http://` URL — over TCP it degrades to mapping socket inodes through
+`/proc/net/tcp`, which is racy and fragile.
+
+**What actually bounds the risk is a per-workspace budget at the gateway**, which
+is what the `Team ID` ← workspace mapping buys. A runaway or hostile session then
+exhausts its own workspace's budget and stops, rather than the tenant's. That is
+the strongest argument for paying the provisioning cost of team-per-workspace.
+
 #### The asymmetry to remember
 
 This is **gateway-mode only**. In Bedrock mode Claude Code signs with SigV4
