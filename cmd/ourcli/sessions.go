@@ -79,6 +79,14 @@ func runList(workspace string) error {
 //
 // Explicit intent always wins: -session joins a specific session even if it is
 // already attached, and -new always forks.
+//
+// SECURITY, once there is a user model (Phase 3): this must filter to sessions
+// the CALLER OWNS. A session is user-specific (section 2.3) and a workspace can
+// be shared at team or org scope (section 2.5), so "any idle session in the
+// workspace" would drop a user into a colleague's live conversation. It is safe
+// today only because Phase 1 has no auth at all -- and note that the explicit
+// path is no safer, since /v1/sessions/{sid}/endpoint will mint an attach
+// credential for any session id to anyone who can reach the control plane.
 func pickSession(workspace string) (sid string, reattached bool, err error) {
 	sessions, err := listSessions(workspace)
 	if err != nil {

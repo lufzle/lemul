@@ -265,6 +265,14 @@ Keep the two orthogonal: **permission gates the verb, scope gates the object.**
 
 `team` implies a team entity not yet in the model — either add it now or restrict v1 scopes to `owner` \| `org`.
 
+> **Session attach must be owner-scoped.** A session is user-specific (§2.3) while
+> a workspace can be shared at `team` or `org` scope, so authorising attach at the
+> *workspace* level would let one user land in another's live conversation.
+> Two places depend on it: `GET /v1/sessions/{sid}/endpoint`, which currently
+> mints an attach credential for any session id, and `ourcli connect`'s
+> reattach-to-an-idle-session behaviour, which currently picks any unattended
+> session in the workspace. Both are safe only because Phase 1 has no auth.
+
 **Join-as-Viewer has two hard requirements.** It is the feature that forces open decision #4 (tmux vs. own VT state model): showing a late joiner the *current screen* needs server-side screen state, which a raw replay buffer cannot provide — you would replay from the top or paint garbage. And **the relay must drop input frames from viewer connections**, or "viewer" silently becomes co-driver, since both attachers write the same PTY stdin.
 
 **Delegate** transfers control of a session that runs with the workspace's task role (tenant Bedrock credentials) and full filesystem access. Log it, and time-box it.
