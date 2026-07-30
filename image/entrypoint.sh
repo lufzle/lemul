@@ -107,11 +107,18 @@ if [ -n "${LEMUL_OTEL_ENDPOINT:-}" ]; then
     add OTEL_TRACES_EXPORT_INTERVAL "${LEMUL_OTEL_TRACES_INTERVAL:-5000}"
   fi
 
-  # Export intervals. The defaults are 60 s for metrics and 5 s for logs (5.5),
-  # which are fine in production but make short-lived processes look like they
-  # emit nothing: a batch still queued when the process exits is simply lost.
+  # Export intervals AND the shutdown timeout. The last one is the load-bearing
+  # setting: its default of 2000 ms is not enough for a turn's final batch to
+  # flush, so api_request and assistant_response -- which fire at END of turn --
+  # were silently lost while user_prompt, which fires at the start, arrived. That
+  # looked like Claude Code not emitting events at all.
   add OTEL_METRIC_EXPORT_INTERVAL "${LEMUL_OTEL_METRIC_INTERVAL:-10000}"
   add OTEL_LOGS_EXPORT_INTERVAL "${LEMUL_OTEL_LOGS_INTERVAL:-2000}"
+  add CLAUDE_CODE_OTEL_SHUTDOWN_TIMEOUT_MS "${LEMUL_OTEL_SHUTDOWN_MS:-15000}"
+
+  # Exporter failures are otherwise silent unless --debug is on, which is no use
+  # in a sandbox nobody is watching.
+  add CLAUDE_CODE_OTEL_DIAG_STDERR 1
 
   # Per-tenant attribution is free: every metric, event and span carries these (5.3).
   attrs="tenant.id=${LEMUL_TENANT_ID:-unknown},workspace.id=${LEMUL_WORKSPACE_ID:-unknown}"

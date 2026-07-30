@@ -1092,6 +1092,13 @@ enable Bedrock model-invocation logging for an account-level record that does no
 depend on Claude Code reporting honestly. None of them recover per-session
 attribution, which is structural.
 
+> **Partly superseded — see §12.6.** `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` does
+> exactly what this section calls impossible: it strips credentials from
+> subprocess environments and isolates the PID namespace so `/proc` cannot be
+> read. The blocker is platform, not mechanism — it needs `bubblewrap` plus
+> namespace privileges that a default container, and probably Fargate, does not
+> grant. Re-evaluate direct-to-Bedrock only after confirming that on Fargate.
+
 **A lead worth a spike, not a design assumption.** Claude Code 2.1.220 ships its
 own sandbox — `sandbox.enabled`, `sandbox.credentials.envVars`,
 `stripAllEnvVars`, `sandbox.network.deniedDomains`, `sandbox.failIfUnavailable`,
@@ -1100,6 +1107,99 @@ It could not be shown to engage on darwin with guessed setting shapes, and the
 Linux image has no `bwrap`/`unshare`, so it is **unverified**. It is also
 version-coupled to Claude Code, which is a weak foundation for a security
 boundary. Verify inside the Linux image before relying on it.
+
+### 12.6 Claude Code environment variables worth leveraging (2026-07-30)
+
+Read from the official reference. Several change earlier conclusions.
+
+#### `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` — corrects §12.5
+
+§12.5 asserted that no credential can be given to Claude Code without also giving
+it to the Bash tool, because they share a UID, a namespace and an environment.
+**That is wrong.** This variable strips provider credentials from Bash, hook and
+MCP subprocess environments, and on Linux runs them in an **isolated PID
+namespace** so they cannot recover the parent's environment through `/proc` —
+which was the specific hole raised as unclosable.
+
+It **fails closed**: without `bubblewrap` present, Claude Code refuses to start
+rather than running unisolated. `bubblewrap` is now in the image.
+
+**But it does not work in a default container.** `bwrap: Creating new namespace
+failed: Operation not permitted` — Docker's seccomp profile blocks the namespace
+syscalls, and `--security-opt seccomp=unconfined` was not enough under OrbStack
+either. **Fargate does not permit `SYS_ADMIN` or custom seccomp**, so this very
+likely cannot run there. Verify before reviving direct-to-Bedrock on its
+strength: the mechanism exists, the platform is the constraint.
+
+Companion: `CLAUDE_CODE_SCRIPT_CAPS` caps per-script invocations when the scrub
+is on. `CLAUDE_CODE_MCP_ALLOWLIST_ENV` gives stdio MCP servers a baseline
+environment instead of the full shell one.
+
+#### Observability
+
+| Variable | Why it matters |
+|---|---|
+| `CLAUDE_CODE_OTEL_SHUTDOWN_TIMEOUT_MS` | **Default 2000 ms is too short.** End-of-turn events (`api_request`, `assistant_response`) were lost while `user_prompt` arrived — which read as "Claude Code emits no events". Now 15000 in the image. |
+| `CLAUDE_CODE_OTEL_DIAG_STDERR` | Exporter errors are otherwise silent unless `--debug`. Useless default for an unattended sandbox; now on. |
+| `OTEL_LOG_TOOL_DETAILS` | Tool input arguments, MCP server names, refusal `category`. **This is the audit detail §5 wants**, and it is off by default for PII reasons — a per-tenant decision, not a global one. |
+| `OTEL_LOG_RAW_API_BODIES` | Accepts `file:<dir>` to write untruncated bodies to disk and emit a path. Full-fidelity audit for customers who want it. |
+| `CLAUDE_CODE_PROPAGATE_TRACEPARENT` | Propagates W3C trace context when `ANTHROPIC_BASE_URL` points at a proxy — i.e. exactly our loopback broker. Needed before traces can span our hops. |
+| `OTEL_METRICS_INCLUDE_*` | `SESSION_ID`, `ACCOUNT_UUID`, `ENTRYPOINT`, `VERSION`, `RESOURCE_ATTRIBUTES` toggles. |
+
+#### `--output-format stream-json` is a second billing channel
+
+Not an environment variable, but the most valuable find. The terminal `result`
+event carries `total_cost_usd`, a full `usage` breakdown including cache tokens,
+**`modelUsage` per model**, `permission_denials`, `num_turns` and `ttft_ms` —
+synchronously, per turn, with no collector.
+
+That is a **third** independent cost source alongside the gateway and OTel, and
+the only one available without infrastructure. Worth considering for the web
+client (Phase 4) and for any headless execution path.
+
+#### Cost and blast-radius control — relevant to §2.4 admission control
+
+`CLAUDE_CODE_MAX_TURNS`, `CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION` (default 200),
+`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` (default 20),
+`CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION`, `CLAUDE_CODE_MAX_OUTPUT_TOKENS`,
+`CLAUDE_CODE_EFFORT_LEVEL`, `MAX_THINKING_TOKENS`.
+
+These bound a runaway session **inside** the sandbox, complementing the gateway
+budget which bounds it from outside. Concurrency caps also bear directly on the
+OOM risk in §2.4, since subagents are what multiply memory use.
+
+#### Gateway mode (decision #12)
+
+| Variable | Why |
+|---|---|
+| `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY` | Populates `/model` from the gateway's `/v1/models`. Off by default because a shared key would show every user every model — so pair it with an `availableModels` allowlist in managed settings. |
+| `CLAUDE_CODE_ENABLE_FINE_GRAINED_TOOL_STREAMING` | **Off by default on gateway connections.** Without it a large tool input arrives only when complete, which reads as the UI hanging. Set to `1`. |
+| `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` | For gateways that reject `anthropic-beta` headers. |
+| `CLAUDE_CODE_ATTRIBUTION_HEADER=0` | When a gateway caches on the request body. |
+| `ENABLE_TOOL_SEARCH` | MCP tool search is disabled by default on non-first-party hosts. |
+| `CLAUDE_CODE_MAX_CONTEXT_TOKENS` | For gateway model IDs whose context window Claude Code cannot infer. |
+| `CLAUDE_CODE_ALWAYS_ENABLE_EFFORT` | Sends `effort` for gateway-custom model IDs. |
+| `CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK` | Prevents **duplicate tool execution** behind a proxy. Worth setting defensively. |
+
+#### Assumption A1, and other leverage
+
+- **`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`** disables auto-updates,
+  telemetry, error reporting and feature-flag fetching. This is the answer for a
+  customer who forbids *any* vendor egress — the A1(b) scenario in §1.3, which
+  was costed at "months". It does not remove our own tunnel, but it removes
+  Claude Code's.
+- **`CLAUDE_CODE_SHELL_PREFIX`** wraps every shell command Claude Code spawns,
+  explicitly "useful for logging or auditing" — a supervisor-side audit hook that
+  does not depend on telemetry at all.
+- **`CLAUDE_CODE_PLUGIN_SEED_DIR`** pre-populates plugins into a container image,
+  which is exactly the sandbox-image case.
+- **`CLAUDE_CODE_RESUME_INTERRUPTED_TURN`** + `CLAUDE_CODE_RESUME_PROMPT` +
+  `..._MAX_AGE_MS` are the machinery for §2.4 session resume, including a bound
+  so a restart does not re-run a stale prompt.
+- **`CLAUDE_CODE_RETRY_WATCHDOG`** retries capacity errors indefinitely for
+  unattended sessions — directly relevant to overnight agent runs.
+- **`CLAUDE_CODE_SESSION_ID`** is set in Bash/hook subprocesses; combined with
+  `CLAUDE_PID` it correlates a subprocess back to its session.
 
 ### 12.1 Questions for the first customer conversation
 

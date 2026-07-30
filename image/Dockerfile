@@ -14,8 +14,14 @@ FROM node:22-slim
 #
 # jq renders managed settings at start; ripgrep and git are what Claude Code
 # reaches for constantly. No tmux -- decision #4 rules it out.
+# bubblewrap is required by CLAUDE_CODE_SUBPROCESS_ENV_SCRUB, which strips
+# provider credentials from Bash/hook/MCP subprocesses and, on Linux, runs them
+# in an isolated PID namespace so they cannot read the parent's environment via
+# /proc. Without it Claude Code refuses to start when the scrub is on -- it fails
+# closed rather than silently running without isolation, which is the behaviour
+# you want from a security control.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl git ripgrep ncurses-term jq less procps \
+      ca-certificates curl git ripgrep ncurses-term jq less procps bubblewrap \
     && rm -rf /var/lib/apt/lists/*
 
 # Pinned, not "latest": a customer's runner must not silently change Claude Code
