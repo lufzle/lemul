@@ -52,6 +52,7 @@ Nothing listens inbound in the customer's account.
 | `internal/registry` | Live tunnels. A **set** per tenant, never one — §2.8. |
 | `internal/controlplane` | API handlers, the two tunnel endpoints, and the byte-transparent relay. |
 | `internal/bedrock` | Three-layer model preflight. Layer 1 (availability) is advisory, layer 2 (a real `InvokeModel`) is authoritative, layer 3 maps errors to the actual fix. |
+| `internal/gateway` | The supported inference path. One loopback proxy per session; the supervisor holds the gateway credential and injects attribution the session cannot forge. |
 | `internal/store` | Workspaces and sessions. JSON-backed; only `Generation` genuinely needs the durability, because it feeds the ECS `client-token`. |
 
 ## Run it locally
@@ -117,6 +118,28 @@ mounts your Claude credentials in; never use it for a Bedrock workspace).
 
 Container naming carries the idempotency key, so the container runtime itself
 enforces one task per workspace generation.
+
+## Inference
+
+Model traffic is brokered through a **customer-hosted gateway** (LiteLLM or
+similar). Direct-to-Bedrock is a draft — see §12.5; Bedrock is still how models
+are reached, as a backend *behind* the gateway.
+
+```bash
+bin/controlplane -gateway-url https://litellm.internal:4000 -gateway-key <key>
+```
+
+The credential never enters a session. The supervisor opens a loopback listener
+per session, and each Claude Code process gets
+`ANTHROPIC_BASE_URL=http://127.0.0.1:<its port>` plus a placeholder token. That
+matters because **Claude Code's Bash tool inherits the environment** — anything
+left there is handed to every command the agent runs, including ones the model
+wrote.
+
+One listener per session is also what makes cost attribution trustworthy: the
+port-to-session mapping is the supervisor's own bookkeeping, so a session cannot
+forge it. Verified from inside a sandbox — a call with a forged credential *and*
+forged tags was recorded by the gateway as the correct workspace and session.
 
 ## Checking an AWS account
 

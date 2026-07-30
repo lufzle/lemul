@@ -44,6 +44,12 @@ type Options struct {
 	// Image is passed through to the driver; the local driver ignores it.
 	Image string
 
+	// GatewayURL and GatewayKey configure the supported inference path
+	// (decision #12): workspace tasks broker model traffic through a loopback
+	// proxy the supervisor owns, so no credential reaches a session.
+	GatewayURL string
+	GatewayKey string
+
 	// BedrockPreflight turns on the model check inside each workspace task.
 	// Off means the workspace is not using Bedrock at all (local development
 	// against a host login), and the task reports its check as skipped.

@@ -744,7 +744,7 @@ Trade-off vs. proxying: structured events, real diffs, approval modals, mobile �
 | 9 | Default admission policy | `min_free_memory_mb` | Adapts to real usage rather than guessing a session count. Needs the supervisor's headroom reporter (§2.4). |
 | 10 | Default session data path | **DECIDED: `relay` + E2E** (§2.7, assumption A2/A3) | Relay-only in v0.1 — assume no customer VPN route. `direct` and `tailnet` deferred but reachable without rework via endpoint negotiation. **Because there is no `direct` escape hatch, E2E is the first Phase 2 item, not a late one** (§1.3). |
 | 11 | Runner replica count in v0.1 | **Design for N, deploy 1** (§2.8) | `desiredCount: 1` self-heals in ~30–60 s and the runner is control-only, so the exposure is "cannot create a workspace" for under a minute. Run 2 in our own test tenant so the multi-tunnel path is exercised. |
-| 12 | Inference provider: Bedrock only, or also a customer-hosted gateway? | **Support a customer-hosted gateway; adopt the provider shape now, build later** — mechanism **validated** (`litellm-spike/`) | Claude Code already supports it natively (`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_CUSTOM_HEADERS`, `CLAUDE_CODE_USE_VERTEX` — all verified present in 2.1.220). **Customer-hosted only**: hosting it ourselves is §1.2 Option B, already rejected. Full analysis in §12.4. |
+| 12 | ~~Inference provider: Bedrock only, or also a customer-hosted gateway?~~ **DECIDED: the gateway is the supported path; direct-to-Bedrock is a draft** | **Built** (`internal/gateway`) — supervisor brokers every session through a per-session loopback proxy. Direct-to-Bedrock deferred, see §12.5. | Claude Code already supports it natively (`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_CUSTOM_HEADERS`, `CLAUDE_CODE_USE_VERTEX` — all verified present in 2.1.220). **Customer-hosted only**: hosting it ourselves is §1.2 Option B, already rejected. Full analysis in §12.4. |
 
 ### 12.3 ~~Where does the Bedrock preflight run?~~ **DECIDED: supervisor, plus a standalone binary for onboarding** (2026-07-29)
 
@@ -952,6 +952,53 @@ which is what §5.3 already promises.
 **This must not displace the `ecs` driver.** Phase 1's exit criterion is a real
 Fargate sandbox; provider flexibility is Phase 3 territory (per-tenant
 configuration).
+
+### 12.5 Why direct-to-Bedrock became a draft (2026-07-30)
+
+Direct-to-Bedrock — Claude Code signing SigV4 against the task role — is deferred
+rather than removed. Bedrock remains how we reach models; it is now a *backend
+behind the gateway* rather than a mode Claude Code speaks natively.
+
+**The measurement that decided it.** An ECS task role is not granted to a
+process; it is an HTTP endpoint any process in the task can reach. And Claude
+Code's Bash tool is a child process that inherits the environment wholesale —
+verified against 2.1.220, where `AWS_ACCESS_KEY_ID`, `AWS_SESSION_TOKEN`,
+`AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` **and** `ANTHROPIC_AUTH_TOKEN` all
+reached a Bash command intact.
+
+There is no way to give Claude Code a credential its Bash tool does not also
+have. They share a UID, a network namespace and an environment, so neither IAM,
+nor `iptables --uid-owner`, nor environment scrubbing can separate them.
+
+**What that costs, precisely.** The hole is *attribution*, not privilege: a
+session can already spend Bedrock tokens through Claude Code legitimately, so
+direct access grants an unattributed path to a capability it already had. The
+genuinely serious part is credential *exfiltration* — temporary, but valid for
+hours.
+
+| | direct-to-Bedrock | gateway (supported) |
+|---|---|---|
+| Secrets in the sandbox | task role, reachable by any process | none |
+| Inference capability | task-wide | brokered only |
+| Attribution | OTel, best-effort | unforgeable, per session |
+| Per-workspace budget enforcement | no | yes |
+| Operational cost | lowest | a gateway to run |
+
+**Mitigations if it is revived**: scope the task role to `bedrock:InvokeModel` on
+pinned models only, so a leaked credential buys inference the user could perform
+anyway and nothing else; pin allowed model ARNs in the VPC endpoint policy; and
+enable Bedrock model-invocation logging for an account-level record that does not
+depend on Claude Code reporting honestly. None of them recover per-session
+attribution, which is structural.
+
+**A lead worth a spike, not a design assumption.** Claude Code 2.1.220 ships its
+own sandbox — `sandbox.enabled`, `sandbox.credentials.envVars`,
+`stripAllEnvVars`, `sandbox.network.deniedDomains`, `sandbox.failIfUnavailable`,
+`sandbox.seccomp.bpfPath`. Those are exactly the primitives that would close this.
+It could not be shown to engage on darwin with guessed setting shapes, and the
+Linux image has no `bwrap`/`unshare`, so it is **unverified**. It is also
+version-coupled to Claude Code, which is a weak foundation for a security
+boundary. Verify inside the Linux image before relying on it.
 
 ### 12.1 Questions for the first customer conversation
 

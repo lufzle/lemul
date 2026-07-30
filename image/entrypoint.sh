@@ -35,7 +35,17 @@ env_json=$(jq -n '{
 
 add() { env_json=$(printf '%s' "$env_json" | jq --arg k "$1" --arg v "$2" '. + {($k): $v}'); }
 
-# --- Bedrock ---------------------------------------------------------------
+# --- Gateway (the supported inference path, decision #12) -------------------
+# Nothing is written here. The supervisor brokers model traffic through a
+# per-session loopback proxy and sets ANTHROPIC_BASE_URL/AUTH_TOKEN per child,
+# because a value in managed settings would reach every session -- and Claude
+# Code's Bash tool inherits the environment, so that is every command the agent
+# runs. The credential stays in the supervisor process.
+
+# --- Bedrock (DRAFT -- not the supported path) ------------------------------
+# Direct-to-Bedrock is deferred: the task role is reachable from any process in
+# the task, so a session's Bash tool can invoke Bedrock outside our accounting
+# and can exfiltrate the credentials. Kept for reconsideration; see decision #12.
 # Absent means this workspace is not using Bedrock (local development against a
 # host login). The flag must then be absent entirely, not set to "0".
 if [ "${LEMUL_BEDROCK:-}" = "1" ]; then

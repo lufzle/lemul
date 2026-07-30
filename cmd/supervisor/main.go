@@ -35,6 +35,11 @@ func main() {
 		// in both drivers: the local driver passes env to the child, and ECS
 		// passes it through the task definition. Flags stay for running the
 		// supervisor by hand.
+		gatewayURL = flag.String("gateway-url", os.Getenv("LEMUL_GATEWAY_URL"),
+			"broker model traffic to this gateway (decision #12; the supported inference path)")
+		gatewayKey = flag.String("gateway-key", os.Getenv("LEMUL_GATEWAY_KEY"),
+			"gateway credential; held by the supervisor and stripped from every session")
+		userID     = flag.String("user", os.Getenv("LEMUL_USER_ID"), "user id for gateway cost attribution")
 		bedrockPre = flag.Bool("bedrock-preflight", os.Getenv("LEMUL_BEDROCK_PREFLIGHT") != "",
 			"check pinned Bedrock models at task start")
 		region  = flag.String("region", os.Getenv("AWS_REGION"), "AWS region for the Bedrock check")
@@ -65,6 +70,9 @@ func main() {
 		RingBytes:        *ringBytes,
 		NudgeDelay:       *nudgeDelay,
 		HeadroomInterval: *headroomEvry,
+		GatewayURL:       *gatewayURL,
+		GatewayKey:       *gatewayKey,
+		UserID:           *userID,
 		BedrockPreflight: *bedrockPre,
 		Region:           *region,
 		Pins:             pins,

@@ -244,6 +244,12 @@ func (s *Server) ensureWorkspace(ctx context.Context, wid string) (*registry.Tun
 // the two drivers cannot drift apart on how a task is configured.
 func (s *Server) workspaceEnv() map[string]string {
 	env := map[string]string{}
+	if s.opt.GatewayURL != "" {
+		env["LEMUL_GATEWAY_URL"] = s.opt.GatewayURL
+		// Delivered to the task, never to a session: the supervisor strips it
+		// from every child environment (see strippedFromChild).
+		env["LEMUL_GATEWAY_KEY"] = s.opt.GatewayKey
+	}
 	if s.opt.BedrockPreflight {
 		env["LEMUL_BEDROCK_PREFLIGHT"] = "1"
 	}

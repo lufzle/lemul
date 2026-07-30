@@ -10,8 +10,10 @@ package supervisor
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -19,6 +21,7 @@ import (
 
 	"github.com/lufzle/lemul-cc/internal/agent"
 	"github.com/lufzle/lemul-cc/internal/bedrock"
+	"github.com/lufzle/lemul-cc/internal/gateway"
 	"github.com/lufzle/lemul-cc/internal/ptysession"
 	"github.com/lufzle/lemul-cc/internal/tunnel"
 )
@@ -35,6 +38,17 @@ type Options struct {
 	NudgeDelay time.Duration
 	// HeadroomInterval is how often resource headroom is reported upward.
 	HeadroomInterval time.Duration
+
+	// GatewayURL, when set, brokers all model traffic through a per-session
+	// loopback proxy the supervisor owns (decision #12). This is the supported
+	// inference path; direct-to-Bedrock is a draft.
+	GatewayURL string
+	// GatewayKey is the credential for that gateway. It is held in this process
+	// only and is stripped from every session's environment.
+	GatewayKey string
+	// UserID is injected for gateway cost attribution. Optional until there is a
+	// user model (Phase 3).
+	UserID string
 
 	// BedrockPreflight enables the model check at task start. Off means the
 	// workspace is not using Bedrock -- local development against a host login --
@@ -56,6 +70,8 @@ type Supervisor struct {
 
 	preflightOnce sync.Once
 	preflight     tunnel.PreflightReport
+
+	broker *gateway.Broker
 }
 
 func New(o Options) *Supervisor {
@@ -69,6 +85,19 @@ func New(o Options) *Supervisor {
 		o.HeadroomInterval = 30 * time.Second
 	}
 	s := &Supervisor{opt: o}
+	if o.GatewayURL != "" {
+		b, err := gateway.New(gateway.Options{
+			Upstream:    o.GatewayURL,
+			APIKey:      o.GatewayKey,
+			WorkspaceID: o.WorkspaceID,
+			UserID:      o.UserID,
+		})
+		if err != nil {
+			log.Fatalf("gateway: %v", err)
+		}
+		s.broker = b
+		log.Printf("gateway mode: brokering model traffic to %s", redactURL(o.GatewayURL))
+	}
 	s.mgr = ptysession.NewManager(ptysession.Options{
 		RingBytes:  o.RingBytes,
 		NudgeDelay: o.NudgeDelay,
@@ -140,6 +169,9 @@ func (s *Supervisor) sendEvent(typ string, v any) {
 
 func (s *Supervisor) onSessionExit(id string, code int) {
 	log.Printf("session %s exited (code %d)", id, code)
+	if s.broker != nil {
+		s.broker.Close(id)
+	}
 	s.sendEvent(tunnel.MsgSessionExited, tunnel.SessionExited{
 		WorkspaceID: s.opt.WorkspaceID,
 		SessionID:   id,
@@ -251,11 +283,18 @@ func (s *Supervisor) handleAttach(stream net.Conn, env tunnel.Envelope) {
 		if term == "" {
 			term = s.opt.Term
 		}
+		// The proxy has to exist before the fork: its URL goes into the child's
+		// environment, and a child that started without it would talk to nothing.
+		env, gerr := s.sessionEnv(req.SessionID, term)
+		if gerr != nil {
+			replyError(stream, gerr.Error())
+			return
+		}
 		var err error
 		sess, err = s.mgr.Create(ptysession.Spec{
 			ID:   req.SessionID,
 			Cmd:  cmd,
-			Env:  childEnv(term),
+			Env:  env,
 			Rows: req.Rows,
 			Cols: req.Cols,
 		})
@@ -354,18 +393,75 @@ func replyError(stream net.Conn, msg string) {
 	_ = tunnel.WriteMsg(stream, tunnel.MsgError, tunnel.Error{Message: msg})
 }
 
-// childEnv builds the environment for a Claude Code process.
+// sessionEnv builds the environment for one session's Claude Code process.
+//
+// In gateway mode it opens that session's loopback proxy and points the child at
+// it, so the child holds only a placeholder token.
+func (s *Supervisor) sessionEnv(sessionID, term string) ([]string, error) {
+	env := childEnv(term)
+	if s.broker == nil {
+		return env, nil
+	}
+	sp, err := s.broker.Open(sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("open gateway proxy for session %s: %w", sessionID, err)
+	}
+	log.Printf("session %s: model traffic brokered via %s", sessionID, sp.BaseURL)
+	return append(env,
+		"ANTHROPIC_BASE_URL="+sp.BaseURL,
+		"ANTHROPIC_AUTH_TOKEN="+gateway.PlaceholderToken,
+	), nil
+}
+
+// strippedFromChild are variables that must never reach a session.
+//
+// This is not defensive tidiness. Claude Code's Bash tool is a child process and
+// inherits the environment wholesale -- verified against 2.1.220, where
+// AWS_ACCESS_KEY_ID, AWS_SESSION_TOKEN, AWS_CONTAINER_CREDENTIALS_RELATIVE_URI
+// and ANTHROPIC_AUTH_TOKEN all reached a Bash command intact. Anything left here
+// is a credential handed to every command the agent runs, including commands the
+// model wrote.
+var strippedFromChild = []string{
+	// The gateway credential the supervisor brokers on the session's behalf.
+	"LEMUL_GATEWAY_KEY=",
+	// The tunnel credential: it would let a session register as this workspace.
+	"LEMUL_TOKEN=",
+	// Set per session from the broker; a stale inherited value would point the
+	// child at another session's proxy and misattribute its spend.
+	"ANTHROPIC_BASE_URL=",
+	"ANTHROPIC_AUTH_TOKEN=",
+	"ANTHROPIC_API_KEY=",
+}
+
+// childEnv builds the base environment for a Claude Code process.
 //
 // TERM must name a terminfo entry that resolves inside the image (hence
 // ncurses-term), and COLORTERM is what unlocks 24-bit colour. Without either,
 // the transport is clean but the rendering is not (section 4.1).
 func childEnv(term string) []string {
 	env := make([]string, 0, len(os.Environ())+2)
+outer:
 	for _, e := range os.Environ() {
 		if strings.HasPrefix(e, "TERM=") || strings.HasPrefix(e, "COLORTERM=") {
 			continue
 		}
+		for _, drop := range strippedFromChild {
+			if strings.HasPrefix(e, drop) {
+				continue outer
+			}
+		}
 		env = append(env, e)
 	}
 	return append(env, "TERM="+term, "COLORTERM=truecolor")
+}
+
+// redactURL keeps credentials out of logs if an upstream is ever given as a
+// URL with userinfo.
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "(unparseable)"
+	}
+	u.User = nil
+	return u.String()
 }
