@@ -257,6 +257,9 @@ func (s *Server) workspaceEnv() map[string]string {
 		env["AWS_REGION"] = s.opt.Region
 	}
 	if s.opt.Pins != "" {
+		// Consumed twice inside the task: the entrypoint renders them into
+		// managed settings, and the preflight checks the same value. One setting,
+		// so the two cannot drift.
 		env["LEMUL_PINS"] = s.opt.Pins
 	}
 	return env

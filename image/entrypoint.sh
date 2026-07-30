@@ -35,12 +35,39 @@ env_json=$(jq -n '{
 
 add() { env_json=$(printf '%s' "$env_json" | jq --arg k "$1" --arg v "$2" '. + {($k): $v}'); }
 
+# --- Model pins -------------------------------------------------------------
+# Pinning is mandatory in every mode. Unpinned, opus/sonnet resolve to Claude
+# Code's built-in default, which can lag, can be unavailable, and which the docs
+# warn is billed at Opus rates (section 3.1).
+#
+# LEMUL_PINS is "role=modelID" pairs, the same value the preflight checks, so one
+# setting cannot drift from the other. The IDs are provider-scoped: Bedrock wants
+# inference profile IDs (us.anthropic.…) while a gateway's are arbitrary aliases
+# defined in its own config, so there is no universal default -- an unset pin is
+# left unset rather than guessed.
+pin_from_spec() {
+  # Trailing newline matters: without it `read` drops the final field, which
+  # silently loses the last pin.
+  printf '%s\n' "${LEMUL_PINS:-}" | tr ',' '\n' | while IFS='=' read -r role id; do
+    [ -n "$role" ] && [ -n "$id" ] && printf '%s\t%s\n' "$role" "$id"
+  done
+}
+for role in opus sonnet haiku; do
+  id=$(pin_from_spec | awk -F'\t' -v r="$role" '$1==r {print $2; exit}')
+  [ -z "$id" ] && continue
+  case "$role" in
+    opus)   add ANTHROPIC_DEFAULT_OPUS_MODEL   "$id" ;;
+    sonnet) add ANTHROPIC_DEFAULT_SONNET_MODEL "$id" ;;
+    haiku)  add ANTHROPIC_DEFAULT_HAIKU_MODEL  "$id" ;;
+  esac
+done
+
 # --- Gateway (the supported inference path, decision #12) -------------------
-# Nothing is written here. The supervisor brokers model traffic through a
-# per-session loopback proxy and sets ANTHROPIC_BASE_URL/AUTH_TOKEN per child,
-# because a value in managed settings would reach every session -- and Claude
-# Code's Bash tool inherits the environment, so that is every command the agent
-# runs. The credential stays in the supervisor process.
+# No base URL or token is written here. The supervisor brokers model traffic
+# through a per-session loopback proxy and sets ANTHROPIC_BASE_URL/AUTH_TOKEN per
+# child, because a value in managed settings would reach every session -- and
+# Claude Code's Bash tool inherits the environment, so that is every command the
+# agent runs. The credential stays in the supervisor process.
 
 # --- Bedrock (DRAFT -- not the supported path) ------------------------------
 # Direct-to-Bedrock is deferred: the task role is reachable from any process in
@@ -54,12 +81,7 @@ if [ "${LEMUL_BEDROCK:-}" = "1" ]; then
   # with no config change, and Claude Code routes by model-ID shape.
   add CLAUDE_CODE_USE_MANTLE 1
 
-  # Pinning is mandatory. Unpinned, opus/sonnet resolve to Claude Code's built-in
-  # Bedrock default, which can lag or be unavailable in the customer's account --
-  # and the docs warn an unpinned deployment is billed at Opus rates (3.1).
-  add ANTHROPIC_DEFAULT_OPUS_MODEL   "${LEMUL_OPUS_MODEL:-us.anthropic.claude-opus-5}"
-  add ANTHROPIC_DEFAULT_SONNET_MODEL "${LEMUL_SONNET_MODEL:-us.anthropic.claude-sonnet-4-6}"
-  add ANTHROPIC_DEFAULT_HAIKU_MODEL  "${LEMUL_HAIKU_MODEL:-us.anthropic.claude-haiku-4-5-20251001-v1:0}"
+  # Pins are set above from LEMUL_PINS, in every mode.
 fi
 
 # --- Telemetry -------------------------------------------------------------
