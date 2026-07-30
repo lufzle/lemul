@@ -48,7 +48,7 @@ Nothing listens inbound in the customer's account.
 | `internal/tunnel` | yamux over WSS, `[type:1][len:4][payload]` framing, and the control-message union. WebSocket frame types do not survive a yamux stream, so the tag is explicit. |
 | `internal/proto` | The client↔relay contract: binary frames are PTY bytes, text frames are control. |
 | `internal/agent` | The dial-out loop both the runner and the supervisor use. |
-| `internal/driver` | Workspace runtime behind an interface: `local` today, `ecs` next. Exists from day one so our debugging environment shares the product's code path (§13). |
+| `internal/driver` | Workspace runtime behind an interface: `local` (process), `docker` (the real sandbox image), `ecs` next. Exists from day one so our debugging environment shares the product's code path (§13). |
 | `internal/registry` | Live tunnels. A **set** per tenant, never one — §2.8. |
 | `internal/controlplane` | API handlers, the two tunnel endpoints, and the byte-transparent relay. |
 | `internal/bedrock` | Three-layer model preflight. Layer 1 (availability) is advisory, layer 2 (a real `InvokeModel`) is authoritative, layer 3 maps errors to the actual fix. |
@@ -102,6 +102,22 @@ local driver, and the **real supervisor binary**, built by `TestMain`. Only the
 client is a harness. `fidelity_test.go` is the §4.1 suite ported from the S3
 prototype — its job is to prove the split did not regress what S3 established.
 
+## The sandbox image
+
+```bash
+image/build.sh                      # cross-compiles the supervisor, builds the image
+bin/runner -driver docker -image lemul-workspace:dev -project ~/w/some-project
+```
+
+Same image, entrypoint, managed settings and supervisor binary that Fargate will
+run — only the placement substrate differs. Managed settings are rendered at
+container start from environment, not baked, because one image has to serve both
+a Bedrock workspace and local development against a host login (`-host-login`
+mounts your Claude credentials in; never use it for a Bedrock workspace).
+
+Container naming carries the idempotency key, so the container runtime itself
+enforces one task per workspace generation.
+
 ## Checking an AWS account
 
 ```bash
@@ -150,6 +166,5 @@ without blocking, since it means the check reached no verdict.
 
 ## Not yet built
 
-Sandbox image and Bedrock preflight · the `ecs` driver and Terraform · session
-stop/resume, idle detection, warm hold, admission control · workspace CRUD.
-Tracked as the §8 checklist.
+The `ecs` driver and Terraform · session stop/resume, idle detection, warm hold,
+admission control gating · workspace CRUD. Tracked as the §8 checklist.
