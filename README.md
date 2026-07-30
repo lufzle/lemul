@@ -18,6 +18,7 @@ cmd/controlplane    the only public listener: orchestrator API + relay
 cmd/runner          one per tenant, in their VPC. CONTROL ONLY, never on the data path
 cmd/supervisor      one per workspace task. Owns N PTYs, dials out on its own tunnel
 cmd/keyprobe        diagnostic: what bytes does your terminal send for a key?
+cmd/preflight       is this AWS account's Bedrock actually usable?
 ```
 
 The runner/supervisor split is decision #6, *task-dials-out*. The runner places
@@ -50,6 +51,7 @@ Nothing listens inbound in the customer's account.
 | `internal/driver` | Workspace runtime behind an interface: `local` today, `ecs` next. Exists from day one so our debugging environment shares the product's code path (§13). |
 | `internal/registry` | Live tunnels. A **set** per tenant, never one — §2.8. |
 | `internal/controlplane` | API handlers, the two tunnel endpoints, and the byte-transparent relay. |
+| `internal/bedrock` | Three-layer model preflight. Layer 1 (availability) is advisory, layer 2 (a real `InvokeModel`) is authoritative, layer 3 maps errors to the actual fix. |
 | `internal/store` | Workspaces and sessions. JSON-backed; only `Generation` genuinely needs the durability, because it feeds the ECS `client-token`. |
 
 ## Run it locally
@@ -99,6 +101,21 @@ LEMUL_E2E_CLAUDE=1 go test ./e2e -run TestClaudeCode -v   # needs claude + a log
 local driver, and the **real supervisor binary**, built by `TestMain`. Only the
 client is a harness. `fidelity_test.go` is the §4.1 suite ported from the S3
 prototype — its job is to prove the split did not regress what S3 established.
+
+## Checking an AWS account
+
+```bash
+AWS_PROFILE=… bin/preflight -region us-east-2
+```
+
+Verifies each pinned model is genuinely usable. `AUTHORIZED` is not proof — a
+model can report authorized and still refuse to invoke — so only the real
+`InvokeModel` decides. Failures come with the fix, and the distinctions matter:
+an IAM policy gap, a missing inference-profile prefix, and an account that never
+completed the First Time Use form all look similar and have nothing in common.
+
+Opus and Haiku are required (Claude Code reaches for Haiku on nearly every turn);
+Sonnet only warns.
 
 ## Spikes (Phase 0, frozen)
 

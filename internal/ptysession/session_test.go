@@ -286,10 +286,20 @@ func TestChildExitClosesAttachersCleanly(t *testing.T) {
 			if reason != ReasonSessionEnded {
 				t.Fatalf("closed with reason %v, want ReasonSessionEnded", reason)
 			}
-			if _, still := m.Get("s1"); still {
-				t.Error("exited session is still in the manager")
+			// Reaping happens after the attachers are closed, so this has to be
+			// waited for rather than asserted: the attachment closing is not a
+			// promise that the manager has already dropped the session.
+			until := time.After(5 * time.Second)
+			for {
+				if _, still := m.Get("s1"); !still {
+					return
+				}
+				select {
+				case <-until:
+					t.Fatal("exited session was never removed from the manager")
+				case <-time.After(10 * time.Millisecond):
+				}
 			}
-			return
 		}
 	}
 }

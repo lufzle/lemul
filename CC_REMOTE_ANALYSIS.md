@@ -422,10 +422,17 @@ Both Bedrock surfaces (legacy `InvokeModel` and Mantle `bedrock-mantle.{region}.
 Unpinned, `opus`/`sonnet` resolve to Claude Code's built-in Bedrock default, which can lag the newest release or be unavailable in the customer's account — CC then silently falls back. The docs also warn an unpinned deployment gets **billed at Opus rates**. Make pins a per-tenant config value with a sane default:
 
 ```bash
-ANTHROPIC_DEFAULT_OPUS_MODEL='us.anthropic.claude-opus-4-8'
+ANTHROPIC_DEFAULT_OPUS_MODEL='us.anthropic.claude-opus-5'
 ANTHROPIC_DEFAULT_SONNET_MODEL='us.anthropic.claude-sonnet-4-6'
 ANTHROPIC_DEFAULT_HAIKU_MODEL='us.anthropic.claude-haiku-4-5-20251001-v1:0'
 ```
+
+All three verified `AUTHORIZED` and invocable on `aureum-dev-full-access`
+(us-east-2) by `cmd/preflight` on 2026-07-29. They are the defaults in
+`internal/bedrock.DefaultPins`. **Pin the cross-region inference profile ID**
+(`us.` prefix): the bare foundation model ID returns *"Invocation of model ID …
+with on-demand throughput isn't supported"* even on an account that is fully
+authorized for it.
 
 ### 3.2 Mantle vs the Invoke API — use both flags, plan on Invoke
 
@@ -664,7 +671,7 @@ tenant→process routing does not arise; when it does, it is the Postgres lookup
 
 One workspace, one tenant, IDs hardcoded in config. No auth, no multi-tenancy, no billing, no web UI.
 
-- [ ] **Bedrock preflight in the runner's startup health check.** Three layers, because each catches a different failure:
+- [x] **Bedrock preflight — three layers, built and validated against real accounts** (`internal/bedrock`, `cmd/preflight`). **Placement is still open — see §12.3:** it cannot live in the runner as written here, because §2.1 denies the runner any Bedrock permission. Three layers, because each catches a different failure:
   1. `bedrock:GetFoundationModelAvailability` per configured model — assert **`authorizationStatus == AUTHORIZED`**, not merely that the model is listed. `list-inference-profiles` returning `ACTIVE` is **not** an entitlement check (a test account listed 25 Anthropic profiles `ACTIVE` and could invoke none).
   2. A real minimal `InvokeModel`, since only that proves end-to-end.
   3. Map failures to actionable messages — `NOT_AUTHORIZED` and `Operation not allowed` mean different things and have different fixes.
@@ -737,6 +744,29 @@ Trade-off vs. proxying: structured events, real diffs, approval modals, mobile �
 | 9 | Default admission policy | `min_free_memory_mb` | Adapts to real usage rather than guessing a session count. Needs the supervisor's headroom reporter (§2.4). |
 | 10 | Default session data path | **DECIDED: `relay` + E2E** (§2.7, assumption A2/A3) | Relay-only in v0.1 — assume no customer VPN route. `direct` and `tailnet` deferred but reachable without rework via endpoint negotiation. **Because there is no `direct` escape hatch, E2E is the first Phase 2 item, not a late one** (§1.3). |
 | 11 | Runner replica count in v0.1 | **Design for N, deploy 1** (§2.8) | `desiredCount: 1` self-heals in ~30–60 s and the runner is control-only, so the exposure is "cannot create a workspace" for under a minute. Run 2 in our own test tenant so the multi-tunnel path is exercised. |
+
+### 12.3 Open: where does the Bedrock preflight run? (2026-07-29)
+
+§8 puts the Bedrock preflight in **the runner's startup health check**. §2.1 says
+the runner task role holds `ecs:RunTask`/`StopTask` and **cannot call Bedrock**.
+Both cannot be true, and the two-role split is the load-bearing security
+property, so §8 is the side that has to give.
+
+The preflight itself is built and validated (`internal/bedrock`,
+`cmd/preflight`); only its placement is open. Three options:
+
+| Option | Cost |
+|---|---|
+| **a.** Grant the runner read-only availability + a scoped `InvokeModel` | Weakens the clean "the runner cannot call Bedrock" answer in a security review, for a startup check |
+| **b.** Run it in the **supervisor**, which legitimately holds the Bedrock role, and report up the event stream | Free, correct role — but the customer only learns at first session, not at deploy time |
+| **c.** Runner launches a **one-shot preflight task** on the sandbox task definition | Correct role *and* deploy-time feedback; costs one short Fargate task per runner start |
+
+**Recommendation: (b) now, (c) when the ECS driver lands.** (b) needs no new IAM
+and is where the credentials already are; (c) restores the deploy-time signal
+without touching the role split, and reuses the same binary.
+
+Either way `cmd/preflight` stays a standalone binary, because the onboarding
+runbook needs a customer to run it **before any of our components exist**.
 
 ### 12.2 Decision #4, measured (2026-07-29)
 
