@@ -62,8 +62,19 @@ bin/runner       -control-plane ws://localhost:9000 -token dev-token -supervisor
 bin/ourcli connect w1
 ```
 
-`ourcli` prints the session id on detach; reattach with
-`bin/ourcli connect w1 -session <id>`.
+```
+ourcli connect <workspace>               reattach to an idle session, else start one
+ourcli connect <workspace> -new          always start a new session
+ourcli connect <workspace> -session <id> attach to a specific session
+ourcli connect <workspace> -mode viewer  read-only; input is dropped
+ourcli ls <workspace>                    what is in there, and who is on it
+```
+
+Bare `connect` reattaches only to a session **nobody is attached to**. Both
+attachers write the same PTY stdin (§2.5), so joining an in-use session by
+default would silently make two people co-drive one Claude Code — while opening
+a second terminal should give you a second session, which is what the shared
+filesystem is for.
 
 Detach is `Ctrl-]`. The client recognises all three encodings a terminal may use
 for it — the legacy `0x1d`, kitty `CSI 93;5u`, and modifyOtherKeys

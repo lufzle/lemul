@@ -81,6 +81,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/tunnel/runner", s.handleRunnerTunnel)
 	mux.HandleFunc("GET /v1/tunnel/workspace", s.handleWorkspaceTunnel)
 	mux.HandleFunc("POST /v1/workspaces/{wid}/sessions", s.handleCreateSession)
+	mux.HandleFunc("GET /v1/workspaces/{wid}/sessions", s.handleListSessions)
 	mux.HandleFunc("GET /v1/sessions/{sid}/endpoint", s.handleEndpoint)
 	mux.HandleFunc("GET /v1/sessions/{sid}/attach", s.handleAttach)
 	return mux

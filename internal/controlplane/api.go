@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -67,6 +68,91 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		WorkspaceID: wid,
 		Status:      "created",
 	})
+}
+
+// SessionStatus values on the session-process axis of section 2.4. The session
+// record is durable; the process is not, so a session can exist without one.
+const (
+	SessionRunning = "running"
+	SessionStopped = "stopped"
+)
+
+type sessionDoc struct {
+	ID        string `json:"id"`
+	Status    string `json:"status"`
+	CreatedAt string `json:"created_at"`
+	Attachers int    `json:"attachers"`
+	Rows      uint16 `json:"rows,omitempty"`
+	Cols      uint16 `json:"cols,omitempty"`
+}
+
+type sessionListResponse struct {
+	WorkspaceID string       `json:"workspace_id"`
+	Sessions    []sessionDoc `json:"sessions"`
+}
+
+// handleListSessions reports the sessions in a workspace, newest first.
+//
+// It deliberately does NOT start the workspace: listing is a read, and a user
+// asking what exists should not be billed for a Fargate task. If the task is not
+// running, every session is reported stopped -- which is honest, because the
+// records outlive the processes.
+//
+// Liveness comes from the supervisor rather than from our own bookkeeping. It is
+// the only component that knows whether a PTY still exists, and asking it is
+// what keeps this from drifting into a second source of truth.
+func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
+	wid := r.PathValue("wid")
+
+	records, err := s.st.ListSessions(wid)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	live := s.liveSessions(wid)
+
+	docs := make([]sessionDoc, 0, len(records))
+	for _, rec := range records {
+		d := sessionDoc{
+			ID:        rec.ID,
+			Status:    SessionStopped,
+			CreatedAt: rec.CreatedAt.UTC().Format(time.RFC3339),
+		}
+		if info, ok := live[rec.ID]; ok {
+			d.Status = SessionRunning
+			d.Attachers = info.Attachers
+			d.Rows, d.Cols = info.Rows, info.Cols
+		}
+		docs = append(docs, d)
+	}
+	// Newest first: the thing a user most likely wants back is the last one they
+	// were using.
+	sort.Slice(docs, func(i, j int) bool { return docs[i].CreatedAt > docs[j].CreatedAt })
+
+	writeJSON(w, http.StatusOK, sessionListResponse{WorkspaceID: wid, Sessions: docs})
+}
+
+// liveSessions asks the workspace task which PTYs it still has. Returns nil when
+// the workspace is not running, which is not an error.
+func (s *Server) liveSessions(wid string) map[string]tunnel.SessionInfo {
+	t, err := s.reg.PickWorkspace(wid)
+	if err != nil {
+		return nil
+	}
+	env, err := command(t, tunnel.MsgListSessions, nil, 10*time.Second)
+	if err != nil || env.Type == tunnel.MsgError {
+		log.Printf("list sessions on %s: %v", wid, err)
+		return nil
+	}
+	var list tunnel.SessionList
+	if err := env.Decode(&list); err != nil {
+		return nil
+	}
+	out := make(map[string]tunnel.SessionInfo, len(list.Sessions))
+	for _, info := range list.Sessions {
+		out[info.ID] = info
+	}
+	return out
 }
 
 // ensureWorkspace returns a live tunnel to the workspace task, placing the task

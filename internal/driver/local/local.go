@@ -140,3 +140,10 @@ func envList(m map[string]string) []string {
 	}
 	return out
 }
+
+// Count reports how many workspaces this driver currently has placed.
+func (d *Driver) Count() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.byRef)
+}

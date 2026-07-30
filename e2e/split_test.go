@@ -233,3 +233,76 @@ func TestRunnerTunnelRejectsBadToken(t *testing.T) {
 		t.Errorf("bad runner token returned %s, want 401", resp.Status)
 	}
 }
+
+// Listing must report what the SUPERVISOR knows, not what the control plane
+// remembers. The supervisor is the only component that knows whether a PTY still
+// exists; keeping our own copy would drift into a second source of truth.
+func TestListSessionsReflectsLiveState(t *testing.T) {
+	s := newStack(t, "sh", "-c", `stty raw -echo; echo READY; exec cat`)
+
+	sid1 := s.newSession("w1")
+	sid2 := s.newSession("w1")
+
+	// Nothing attached yet: both records exist, both PTYs do not.
+	before := s.sessionList("w1")
+	if len(before) != 2 {
+		t.Fatalf("got %d session records, want 2", len(before))
+	}
+	for _, d := range before {
+		if d.Status != "stopped" {
+			t.Errorf("session %s reported %q before anything attached; the PTY is "+
+				"forked on first attach, so it cannot be running yet", d.ID, d.Status)
+		}
+	}
+
+	c := s.attach(sid1, 24, 80, "")
+	c.await("READY", 15*time.Second)
+
+	after := byID(s.sessionList("w1"))
+	if got := after[sid1].Status; got != "running" {
+		t.Errorf("attached session %s reported %q, want running", sid1, got)
+	}
+	if got := after[sid1].Attachers; got != 1 {
+		t.Errorf("attached session %s reported %d clients, want 1", sid1, got)
+	}
+	if got := after[sid2].Status; got != "stopped" {
+		t.Errorf("never-attached session %s reported %q, want stopped", sid2, got)
+	}
+
+	// Detaching leaves the child running, so the session stays live with zero
+	// clients -- exactly the state `connect` reattaches to.
+	c.detach()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		d := byID(s.sessionList("w1"))[sid1]
+		if d.Status == "running" && d.Attachers == 0 {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	d := byID(s.sessionList("w1"))[sid1]
+	t.Fatalf("after detach, session %s reported status=%q clients=%d; "+
+		"want running with 0 clients", sid1, d.Status, d.Attachers)
+}
+
+// Listing must never place a task: it is a read, and a user asking what exists
+// should not be billed for a Fargate cold start.
+func TestListSessionsDoesNotStartTheWorkspace(t *testing.T) {
+	s := newStack(t, "sh", "-c", `exec cat`)
+
+	got := s.sessionList("never-used")
+	if len(got) != 0 {
+		t.Errorf("got %d sessions for an unknown workspace, want 0", len(got))
+	}
+	if n := s.supervisorCount(); n != 0 {
+		t.Errorf("listing placed %d workspace task(s)", n)
+	}
+}
+
+func byID(docs []sessionDocT) map[string]sessionDocT {
+	m := make(map[string]sessionDocT, len(docs))
+	for _, d := range docs {
+		m[d.ID] = d
+	}
+	return m
+}

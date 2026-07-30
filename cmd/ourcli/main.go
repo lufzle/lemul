@@ -6,8 +6,10 @@
 //
 // Usage:
 //
-//	ourcli connect <workspace>              # new session
-//	ourcli connect <workspace> -session <id> # reattach
+//	ourcli connect <workspace>               # reattach if idle, else new
+//	ourcli connect <workspace> -new          # always a new session
+//	ourcli connect <workspace> -session <id> # a specific session
+//	ourcli ls <workspace>                    # what is running in there
 package main
 
 import (
@@ -33,6 +35,7 @@ var (
 	server    *string
 	sessionID *string
 	mode      *string
+	forceNew  *bool
 )
 
 // main parses the subcommand and its positional argument itself, then hands the
@@ -42,28 +45,40 @@ var (
 // `ourcli connect w1 -session s-123` would silently ignore -session -- and that
 // is precisely the line the detach message tells the user to type.
 func main() {
-	fs := flag.NewFlagSet("connect", flag.ExitOnError)
+	fs := flag.NewFlagSet("ourcli", flag.ExitOnError)
 	server = fs.String("server", "http://localhost:9000", "control plane base URL")
-	sessionID = fs.String("session", "", "attach to an existing session instead of creating one")
+	sessionID = fs.String("session", "", "attach to this specific session")
 	mode = fs.String("mode", "control", "control|viewer")
+	forceNew = fs.Bool("new", false, "always start a new session, never reattach")
 
 	usage := func() {
-		fmt.Fprintf(os.Stderr, "usage: ourcli connect <workspace> [flags]\n\n")
+		fmt.Fprintf(os.Stderr, "usage: ourcli connect <workspace> [flags]\n")
+		fmt.Fprintf(os.Stderr, "       ourcli ls <workspace> [flags]\n\n")
 		fs.PrintDefaults()
 	}
 	fs.Usage = usage
 
 	args := os.Args[1:]
-	if len(args) < 2 || args[0] != "connect" || strings.HasPrefix(args[1], "-") {
+	if len(args) < 2 || strings.HasPrefix(args[1], "-") {
 		usage()
 		os.Exit(2)
 	}
-	workspace := args[1]
+	cmd, workspace := args[0], args[1]
 	if err := fs.Parse(args[2:]); err != nil {
 		os.Exit(2)
 	}
 
-	if err := run(workspace); err != nil {
+	var err error
+	switch cmd {
+	case "connect":
+		err = run(workspace)
+	case "ls":
+		err = runList(workspace)
+	default:
+		usage()
+		os.Exit(2)
+	}
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "\r\nourcli: %v\r\n", err)
 		os.Exit(1)
 	}
@@ -86,10 +101,18 @@ func run(workspace string) error {
 	}
 
 	sid := *sessionID
-	if sid == "" {
+	reattached := false
+	switch {
+	case sid != "":
+		// Explicit intent: join this session even if someone is already on it.
+	case *forceNew:
 		var err error
-		sid, err = createSession(workspace)
-		if err != nil {
+		if sid, err = createSession(workspace); err != nil {
+			return err
+		}
+	default:
+		var err error
+		if sid, reattached, err = pickSession(workspace); err != nil {
 			return err
 		}
 	}
@@ -108,7 +131,7 @@ func run(workspace string) error {
 		return fmt.Errorf("unsupported transport %q (this client only speaks relay)", ep.Transport)
 	}
 
-	return attach(fd, sid, ep)
+	return attach(fd, sid, ep, reattached)
 }
 
 func createSession(workspace string) (string, error) {
@@ -149,7 +172,7 @@ func negotiate(sid string) (endpoint, error) {
 	return ep, nil
 }
 
-func attach(fd int, sid string, ep endpoint) error {
+func attach(fd int, sid string, ep endpoint, reattached bool) error {
 	u, err := neturl.Parse(ep.Address)
 	if err != nil {
 		return fmt.Errorf("parse address: %w", err)
@@ -194,7 +217,11 @@ func attach(fd int, sid string, ep endpoint) error {
 	restore := func() { restoreOnce.Do(func() { _ = term.Restore(fd, oldState) }) }
 	defer restore()
 
-	fmt.Fprintf(os.Stdout, "[session %s — Ctrl-] to detach]\r\n", sid)
+	verb := "session"
+	if reattached {
+		verb = "reattached to"
+	}
+	fmt.Fprintf(os.Stdout, "[%s %s — Ctrl-] to detach]\r\n", verb, sid)
 
 	fatal := make(chan os.Signal, 1)
 	signal.Notify(fatal, syscall.SIGTERM, syscall.SIGHUP)

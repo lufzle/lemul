@@ -252,6 +252,8 @@ func (s *Supervisor) handleAttach(stream net.Conn, env tunnel.Envelope) {
 		replyError(stream, err.Error())
 		return
 	}
+	// Kept for the early-return paths below; the main path detaches explicitly
+	// before waiting on the output goroutine. Detach is idempotent.
 	defer sess.Detach(att)
 
 	if err := tunnel.WriteMsg(stream, tunnel.MsgOK, tunnel.AttachOK{
@@ -313,8 +315,17 @@ func (s *Supervisor) handleAttach(stream net.Conn, env tunnel.Envelope) {
 			}
 		}
 	}
+
+	// Order matters: detach BEFORE waiting for the output goroutine.
+	//
+	// That goroutine is parked in att.Next(), which only returns once the
+	// attachment closes -- and the attachment closes in Detach. Waiting first
+	// deadlocks the pair until the session happens to produce output, so a client
+	// detaching from an idle session stayed registered indefinitely: the session
+	// looked occupied, and the goroutine leaked.
+	sess.Detach(att)
 	<-done
-	log.Printf("session %s detached (attachers now %d)", sess.ID, sess.Attachers()-1)
+	log.Printf("session %s detached (attachers now %d)", sess.ID, sess.Attachers())
 }
 
 func replyError(stream net.Conn, msg string) {

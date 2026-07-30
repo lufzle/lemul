@@ -293,3 +293,37 @@ func (c *conn) detach() {
 	_ = c.c.WriteCloseFrame(websocket.CloseGoingAway, "client detached")
 	_ = c.c.Close()
 }
+
+type sessionDocT struct {
+	ID        string `json:"id"`
+	Status    string `json:"status"`
+	CreatedAt string `json:"created_at"`
+	Attachers int    `json:"attachers"`
+	Rows      uint16 `json:"rows"`
+	Cols      uint16 `json:"cols"`
+}
+
+func (s *stack) sessionList(workspace string) []sessionDocT {
+	s.t.Helper()
+	resp, err := http.Get(s.baseURL + "/v1/workspaces/" + workspace + "/sessions")
+	if err != nil {
+		s.t.Fatalf("list sessions: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		s.t.Fatalf("list sessions: %s: %s", resp.Status, body)
+	}
+	var out struct {
+		Sessions []sessionDocT `json:"sessions"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		s.t.Fatalf("list sessions: %v", err)
+	}
+	return out.Sessions
+}
+
+// supervisorCount reports how many workspace tasks this stack's driver placed.
+func (s *stack) supervisorCount() int {
+	return s.drv.Count()
+}
