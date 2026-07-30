@@ -15,12 +15,16 @@ Remote, sandboxed Claude Code workspaces, multi-tenant, running in the customer'
 | Path | What it is |
 |---|---|
 | `CC_REMOTE_ANALYSIS.md` | This document. The decision record — read §1, §2, §12 before changing architecture. |
-| `tui-proxy-proto/` | **Spike S3** (✅). Go: PTY-over-WSS, one-hop and two-hop (yamux tunnel). Its `proto/`, `tunnel/`, `client/` are the basis of production code; `supervisor/` + `runner/` need the split described in §2.8. `README.md` has results and the reasoning behind each design choice. |
+| `cmd/`, `internal/`, `e2e/` | **Phase 1 product code.** The runner/supervisor split, relay, driver interface, local CLI. See `README.md`. |
+| `winch-probe/` | **Decision #4 gate** (✅). Measures whether Claude Code repaints fully on SIGWINCH. `RESULTS.md` has the verdict and the mode-prelude finding it turned up. |
+| `tui-proxy-proto/` | **Spike S3** (✅). Go: PTY-over-WSS, one-hop and two-hop (yamux tunnel). **Frozen as the S3 evidence** — its `proto/` and `tunnel/` were lifted into `internal/`, and its merged runner-proxy shape was replaced by the §2.8 split. `README.md` has results and the reasoning behind each design choice. |
 | `otel-probe/` | **Spike S2** (✅). Minimal OTLP/HTTP-JSON receiver used to prove telemetry is content-free. `RESULTS.md` has the captured findings. |
 | `s1-bedrock/` | **Spike S1** (✅). Dockerfile + `run-s1.sh` (7/7) for Claude Code against Bedrock in a container, plus the image's managed-settings file. `RESULTS.md` covers the Bedrock feature gap and model-access traps. |
 | `~/w/.claude-journal/lufzle-lemul-cc.md` | Chronological work log. |
 
-**Status: Phase 0 complete (all spikes pass). Phase 1 not started.**
+**Status: Phase 0 complete (all spikes pass). Phase 1 in progress — increment 1
+(runner/supervisor split, relay, driver interface, endpoint negotiation) is done
+and under test.**
 
 ---
 
@@ -665,22 +669,28 @@ One workspace, one tenant, IDs hardcoded in config. No auth, no multi-tenancy, n
   2. A real minimal `InvokeModel`, since only that proves end-to-end.
   3. Map failures to actionable messages — `NOT_AUTHORIZED` and `Operation not allowed` mean different things and have different fixes.
 - [ ] **Onboarding runbook for Bedrock model access**, covering the Anthropic **First Time Use form** (once per account, or inherited from the AWS Org management account; granted instantly on submission). Must include: write a *substantive* `useCases` description (example wording provided), and **what to do if denied** — `put_use_case_for_model_access` then returns `ValidationException: Your account is not authorized … create a support case`, so a denied account has **no self-service recovery** and needs an AWS support ticket. This is a real "our product looks broken" risk. See [`s1-bedrock/RESULTS.md`](s1-bedrock/RESULTS.md) § FTU denial is not self-recoverable.
-- [ ] Sandbox image — CC (pinned version) + supervisor + tmux + toolchains + managed settings + `.mcp.json`
-- [ ] Supervisor — **multi-PTY manager** (one per session, §2.3), resize channel, idle reporter, resource-headroom reporter
-- [ ] **Detach/reattach without tmux or a VT model** (decision #4): (a) stop killing the child on client disconnect — that *is* detach; (b) bounded replay ring per session (~256 KB); (c) on reattach nudge the size (cols−1, then back) so SIGWINCH makes the app repaint its current frame. **Verify the repaint assumption first** — 2 minutes with the prototype; if CC only patches partially rather than redrawing, the Phase 2 VT model moves here instead.
+- [ ] Sandbox image — CC (pinned version) + supervisor + `ncurses-term` + toolchains + managed settings + `.mcp.json`. **No tmux** — decision #4 rules it out, and the §12.2 measurement removed the last reason to want it.
+- [x] Supervisor — **multi-PTY manager** (one per session, §2.3), resize channel, resource-headroom reporter (`internal/ptysession`, `internal/supervisor`). Idle reporter still outstanding — it needs the OTel signal below.
+- [x] **Detach/reattach without tmux or a VT model** (decision #4): (a) the child now outlives client disconnect — that *is* detach; (b) bounded replay ring per session (~256 KB); (c) SIGWINCH nudge on reattach; **(d) mode prelude** — replay the terminal-mode negotiation, which the repaint does *not* restore. The repaint assumption is **measured, not assumed** (§12.2, `winch-probe/RESULTS.md`): full-viewport repaint confirmed, and (d) was the finding that fell out of it. The ring turned out to be polish rather than correctness.
 - [ ] Session lifecycle — stop (Ctrl-C/Ctrl-D semantics) / resume via `claude --resume <id>`; conversation persists on the workspace volume (§2.4)
-- [ ] Admission control at session-create — `max_sessions` and `min_free_memory_mb` policies (§2.4). **Refuse with a clear error; never let OOM be the discovery mechanism.**
+- [ ] Admission control at session-create — `max_sessions` and `min_free_memory_mb` policies (§2.4). **Refuse with a clear error; never let OOM be the discovery mechanism.** *(The supervisor already reports headroom up the tunnel; the control plane logs it but does not yet gate on it.)*
 - [ ] Idle detection using the S2-validated signal: no client attached AND no `active_time.total{type=cli}` AND no recent `api_request`/`tool_result` (§2.4). Per-session opt-out.
 - [ ] Warm hold (~5 min) before scaling a workspace task to zero (§2.4)
-- [ ] Runner — outbound tunnel, `RunTask`/`StopTask`, stream multiplexing
-- [ ] Relay — authenticate → resolve workspace → byte pump. **Model tunnels as a set per tenant** (`map[tenant][]tunnel`), not a single tunnel — retrofitting is expensive, the data-structure choice is free (§2.8)
-- [ ] **Idempotent workspace dispatch** — ECS `RunTask --client-token` from `workspace_id + generation`. Do this even with one runner: it protects every retry-after-timeout, and duplicate dispatch otherwise means two tasks and a split-brain filesystem (§2.8)
-- [ ] **Endpoint negotiation** — `GET /v1/sessions/{sid}/endpoint` returning `{transport, address, credential, peer_pubkey}`. v0.1 only ever answers `relay`, but hardcoding the relay in the client makes E2E/direct/tailnet a rewrite (§2.7)
-- [ ] Local CLI — raw mode, WSS, resize, clean termios restore on exit and panic; workspace-name arg + `--create`, and **no prompt when stdin is not a TTY** (§2.6)
+- [x] Runner — outbound tunnel, stream multiplexing, control-only (`internal/runner`). `RunTask`/`StopTask` proper arrive with the `ecs` driver; the `local` driver exercises the same interface.
+- [x] Relay — authenticate → resolve workspace → byte pump (`internal/controlplane`). Tunnels are a **set per tenant** as required, with round-robin dispatch so a second replica is exercised rather than idle.
+- [x] **Idempotent workspace dispatch** — the generation counter, the derived key (`driver.Spec.IdempotencyKey`, 64-char capped) and per-workspace placement locking are all in. Wiring the key to ECS `--client-token` lands with the `ecs` driver; the `local` driver already honours it. Generation is persisted, since a control-plane restart that reset it would silently void the protection.
+- [x] **Endpoint negotiation** — `GET /v1/sessions/{sid}/endpoint` returns `{transport, address, credential, peer_pubkey}`; the client refuses any transport it does not speak rather than assuming. Credentials are single-use.
+- [x] Local CLI — raw mode, WSS, resize, termios restore on exit/panic/SIGTERM, `Ctrl-]` detach, reattach by session id (`cmd/ourcli`). `--create` and the not-found prompt wait for the workspace CRUD API; the non-TTY guard is already in, so the pipeline-hang failure mode cannot appear.
 - [ ] Terraform module — runner service, both IAM roles, task definition, VPC endpoint, S3 bucket, and **runner token delivery** (Terraform variable → Secrets Manager → task env; document rotation)
-- [ ] **Workspace-runtime driver interface, from day one** — `ecs` driver (customer VPC, the product) and `local` driver (Docker on our machine, for development and demos). This is the mitigation for the biggest standing risk in §13: once the data plane lives in customer accounts we lose the ability to reproduce failures, so our debugging environment must share a code path with the product. Retrofitting an interface after the fact does not achieve that.
+- [x] **Workspace-runtime driver interface, from day one** — `internal/driver` with the `local` driver landed (process mode; Docker mode arrives with the sandbox image). The `ecs` driver is the remaining implementation. This is the mitigation for the biggest standing risk in §13: once the data plane lives in customer accounts we lose the ability to reproduce failures, so our debugging environment must share a code path with the product — the e2e suite runs the real supervisor binary through the real driver for exactly that reason.
 
 **Exit criterion:** `ourcli connect <workspace>` from a laptop yields a working Claude Code in a fresh Fargate sandbox in a test AWS account; a second session in the same workspace starts in ~1 s; `Ctrl-]` detaches and reattaching lands back in the live session.
+
+> **Where increment 1 leaves it:** everything above holds today against the
+> `local` driver, covered by `e2e/` — including real Claude Code detach/reattach
+> (`TestClaudeCodeDetachReattach`) and the second-session-is-faster property.
+> What remains for the exit criterion proper is the substrate: the sandbox image,
+> the `ecs` driver and Terraform.
 
 > **Not** "survives a 60-second network drop" — that needs the hardened reconnect/replay path, which is Phase 2 item 2. Phase 1's bar is detach/reattach while the connection is healthy. (The prototype supervisor currently *kills* the child on disconnect; keeping it alive is Phase 1, replaying missed output is Phase 2.)
 
@@ -719,7 +729,7 @@ Trade-off vs. proxying: structured events, real diffs, approval modals, mobile �
 | 1 | ~~Design partner for Option C~~ **DECIDED: proceed without one** | Build on the recorded assumptions in §1.3 | A1/A2/A3 are assumed rather than validated. A2 and A3 fail additively; **A1 is the expensive one** (1–2 weeks if partly wrong, months if fully wrong). Still worth acquiring a partner opportunistically — the first real security questionnaire validates or breaks A1 and A3 in one document. |
 | 2 | Runner: orchestrator or host? | **Orchestrator** — `ecs:RunTask` on one task definition | Tiny legible IAM ask; capacity is ECS's problem. Host mode = zero AWS perms but bin-packing and the isolation boundary (gVisor/Kata) become ours. |
 | 3 | Workspace persistence | **Fargate ephemeral disk + git clone + S3 snapshot** for uncommitted state | ~5–15 s resume, no AZ pinning. EBS-attach-to-Fargate is better long-term (real block perf, no snapshot step) but adds cold-start latency and AZ pinning. EFS is out (§1.1). |
-| 4 | ~~Reconnect: tmux or own VT state model?~~ **DECIDED: neither tmux nor VT model in Phase 1 — stage it** | **Phase 1:** keep the child alive on disconnect + bounded replay ring + SIGWINCH-nudge repaint on reattach. **Phase 2:** VT state model in the supervisor. **Never tmux.** | The manual matrix confirmed Shift+Enter and plan mode survive the byte-transparent path — both depend on the enhanced keyboard protocol round-tripping. tmux is a second emulator that normalizes `TERM` to `tmux-256color`, needs explicit config for truecolor and OSC 52, and has partial `extended-keys` support: it risks regressing exactly those validated properties, and becomes a permanent third suspect for every rendering oddity. The VT model belongs in the supervisor anyway (E2E rules out relay-side state, §2.7) and pays a dividend — screen snapshots give live dashboard thumbnails. **Assumption to verify first:** that Claude Code repaints fully on SIGWINCH. Matrix item #3 passing is encouraging but not conclusive; if it only patches partially, the VT model moves into Phase 1. |
+| 4 | ~~Reconnect: tmux or own VT state model?~~ **DECIDED and VERIFIED: neither tmux nor VT model in Phase 1** | **Phase 1:** keep the child alive on disconnect + **mode prelude** + bounded replay ring + SIGWINCH-nudge repaint on reattach. **Phase 2:** VT state model in the supervisor. **Never tmux.** | tmux is a second emulator that normalizes `TERM` to `tmux-256color`, needs explicit config for truecolor and OSC 52, and has partial `extended-keys` support: it risks regressing exactly the Shift+Enter and plan-mode behaviour the manual matrix validated, and becomes a permanent third suspect for every rendering oddity. The VT model belongs in the supervisor anyway (E2E rules out relay-side state, §2.7) and pays a dividend — screen snapshots give live dashboard thumbnails. **The gating assumption is now measured, not assumed** — see [`winch-probe/RESULTS.md`](winch-probe/RESULTS.md) and §12.2. |
 | 5 | Who pays for the search MCP provider? | **Us** initially | Cheap, invisible, one less onboarding step. |
 | 6 | ~~Session data path: runner-proxy or task-dials-out?~~ **DECIDED: task-dials-out** | Each workspace task holds its own outbound tunnel | Keeps the runner off the data path — no throughput bottleneck, and runner failure/redeploy leaves running sessions untouched (§2.8). Runner passes a workspace-scoped, short-TTL tunnel credential at `RunTask` time; relay binds it to the task identity on first connect. **Caveat:** requires workspace tasks to reach our endpoint. They already need egress for npm/pypi/git, so it is an extra allowlist entry — but a customer forbidding *all* vendor egress from workspace subnets forces runner-proxy. Ask early (§12.1). |
 | 7 | Session auto-stop default: on or off? | **On**, with per-session opt-out | Protects against forgotten sessions burning the customer's Bedrock quota. The §2.4 idle signal makes it safe for unattended runs. |
@@ -727,6 +737,48 @@ Trade-off vs. proxying: structured events, real diffs, approval modals, mobile �
 | 9 | Default admission policy | `min_free_memory_mb` | Adapts to real usage rather than guessing a session count. Needs the supervisor's headroom reporter (§2.4). |
 | 10 | Default session data path | **DECIDED: `relay` + E2E** (§2.7, assumption A2/A3) | Relay-only in v0.1 — assume no customer VPN route. `direct` and `tailnet` deferred but reachable without rework via endpoint negotiation. **Because there is no `direct` escape hatch, E2E is the first Phase 2 item, not a late one** (§1.3). |
 | 11 | Runner replica count in v0.1 | **Design for N, deploy 1** (§2.8) | `desiredCount: 1` self-heals in ~30–60 s and the runner is control-only, so the exposure is "cannot create a workspace" for under a minute. Run 2 in our own test tenant so the multi-tunnel path is exercised. |
+
+### 12.2 Decision #4, measured (2026-07-29)
+
+The gate on decision #4 was whether Claude Code repaints its *whole* frame on
+SIGWINCH or only patches part of it. Measured rather than eyeballed, because an
+already-attached terminal holds the correct screen and so cannot distinguish the
+two: [`winch-probe/`](winch-probe/) captures **only** the bytes a `cols-1 → cols`
+nudge produces and replays them into a *fresh* VT emulator — exactly what a
+reattaching client with an empty ring would see.
+
+**Result: full repaint, in all five scenarios tested** (fresh screen, panel
+within the viewport, content scrolled off the top, viewport overflow, and a
+tool-output transcript). The reconstructed screen matched the ground truth
+line-for-line every time. The repaint homes the cursor and emits `ESC[2K` — erase
+entire line — twice per row before rewriting it, so it is correct even onto a
+*dirty* screen. There is no alternate screen and no erase-display; Claude Code is
+an inline TUI and does not need one.
+
+Two consequences for the §8 checklist:
+
+1. **The replay ring is not load-bearing.** The nudge alone reconstructs the
+   viewport; the ring only restores scrollback above it. Item (b) is polish, not
+   correctness.
+
+2. **The repaint restores the grid but not the modes — a new required item.**
+   Claude Code emits `ESC[?2004h` (bracketed paste), `ESC[>1u` (kitty keyboard)
+   and `ESC[>4;2m` (modifyOtherKeys) exactly once at startup and never again, not
+   even on SIGWINCH. A client reattaching into a fresh terminal would get a
+   perfect-looking screen with **broken Shift+Enter and broken paste** — working
+   display, broken input, precisely the failure §9 item 2 predicts for the Phase 2
+   VT model. The fix is a **mode prelude**: scan the stream for the DECSET/DECRST,
+   `CSI > … u` and `CSI > 4 ; … m` shapes, keep the latest of each, replay it
+   ahead of the ring on attach. An incremental CSI scanner, not a screen model.
+   Mode **2026** (synchronized output) is deliberately excluded — replaying a
+   stale "begin" freezes the client's display.
+
+A third finding came out of implementing it: **the nudge must be skipped on the
+attach that creates the session.** The child has drawn nothing yet, so there is
+nothing to repaint, and nudging races its first frame — the child reads the
+shrunken width and renders one column narrow. Same class of bug as starting a PTY
+at 0×0, and just as easy to misattribute to the TUI. Caught by
+`e2e/fidelity_test.go:TestInitialSizeAppliedBeforeChildStarts`.
 
 ### 12.1 Questions for the first customer conversation
 

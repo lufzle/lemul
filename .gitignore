@@ -14,3 +14,7 @@
 .env.*
 *.pem
 credentials
+
+# build output
+/bin/
+/winch-probe/winch-probe
