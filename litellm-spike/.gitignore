@@ -1,0 +1,2 @@
+# Never commit: contains AWS keys exported from the local profile.
+.env

@@ -163,6 +163,7 @@ without blocking, since it means the check reached no verdict.
 | `otel-probe/` | Telemetry is content-free by default, canary-tested |
 | `tui-proxy-proto/` | TUI fidelity over WSS, one hop and two. Frozen as the S3 evidence; production code lives above |
 | `winch-probe/` | Does Claude Code repaint fully on SIGWINCH? Gates decision #4 — see its `RESULTS.md` |
+| `litellm-spike/` | Does Claude Code work through a gateway, and do header tags partition cost? Validates decision #12 |
 
 ## Not yet built
 

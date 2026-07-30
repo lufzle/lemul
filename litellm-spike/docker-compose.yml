@@ -1,0 +1,37 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: litellm
+      POSTGRES_DB: litellm
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    env_file: .env
+    environment:
+      # Spend logs and the admin UI both require a database; without one
+      # /spend/logs returns nothing and /ui has no store to authenticate against.
+      DATABASE_URL: postgresql://litellm:litellm@db:5432/litellm
+      STORE_MODEL_IN_DB: "True"
+      LITELLM_MASTER_KEY: sk-lemul-spike
+      UI_USERNAME: admin
+      UI_PASSWORD: sk-lemul-spike
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+
+volumes:
+  dbdata:

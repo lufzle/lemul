@@ -744,7 +744,7 @@ Trade-off vs. proxying: structured events, real diffs, approval modals, mobile �
 | 9 | Default admission policy | `min_free_memory_mb` | Adapts to real usage rather than guessing a session count. Needs the supervisor's headroom reporter (§2.4). |
 | 10 | Default session data path | **DECIDED: `relay` + E2E** (§2.7, assumption A2/A3) | Relay-only in v0.1 — assume no customer VPN route. `direct` and `tailnet` deferred but reachable without rework via endpoint negotiation. **Because there is no `direct` escape hatch, E2E is the first Phase 2 item, not a late one** (§1.3). |
 | 11 | Runner replica count in v0.1 | **Design for N, deploy 1** (§2.8) | `desiredCount: 1` self-heals in ~30–60 s and the runner is control-only, so the exposure is "cannot create a workspace" for under a minute. Run 2 in our own test tenant so the multi-tunnel path is exercised. |
-| 12 | Inference provider: Bedrock only, or also a customer-hosted gateway? | **Support a customer-hosted gateway; adopt the provider shape now, build later** | Claude Code already supports it natively (`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_CUSTOM_HEADERS`, `CLAUDE_CODE_USE_VERTEX` — all verified present in 2.1.220). **Customer-hosted only**: hosting it ourselves is §1.2 Option B, already rejected. Full analysis in §12.4. |
+| 12 | Inference provider: Bedrock only, or also a customer-hosted gateway? | **Support a customer-hosted gateway; adopt the provider shape now, build later** — mechanism **validated** (`litellm-spike/`) | Claude Code already supports it natively (`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_CUSTOM_HEADERS`, `CLAUDE_CODE_USE_VERTEX` — all verified present in 2.1.220). **Customer-hosted only**: hosting it ourselves is §1.2 Option B, already rejected. Full analysis in §12.4. |
 
 ### 12.3 ~~Where does the Bedrock preflight run?~~ **DECIDED: supervisor, plus a standalone binary for onboarding** (2026-07-29)
 
@@ -843,6 +843,16 @@ at 0×0, and just as easy to misattribute to the TUI. Caught by
 Raised while an account's Bedrock entitlement was stuck, but it stands on its own
 merits — the entitlement mess is a bad reason to reorder a roadmap, and a good
 reason to notice a gap.
+
+> **Validated 2026-07-30 — see [`litellm-spike/RESULTS.md`](litellm-spike/RESULTS.md).**
+> Claude Code runs through LiteLLM end to end (`claude → LiteLLM → Bedrock`), and
+> **header-injected tags partition spend per workspace, user and session** — the
+> two assumptions this decision rests on. Three things the spike added: a gateway
+> deployment needs Postgres or spend logging silently does nothing; Claude Code's
+> per-call floor is ~41 k tokens because the system prompt and tool definitions
+> dominate; and LiteLLM appends its own tags, so aggregation must filter rather
+> than trust. Still unvalidated: the loopback proxy binding itself, streaming, and
+> whether a gateway restores WebSearch.
 
 **The mechanism already exists.** Claude Code 2.1.220 supports pointing at any
 Anthropic-Messages-compatible endpoint, verified by inspecting the shipped binary:

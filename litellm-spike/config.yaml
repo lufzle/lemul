@@ -1,0 +1,32 @@
+# LiteLLM proxy for spike: does Claude Code work through a gateway? (§12.4)
+#
+# Backend is Bedrock in aureum-dev-full-access, the one account with working
+# entitlement. That is deliberate -- the spike is about the GATEWAY hop, so the
+# thing behind it has to be known-good or a failure proves nothing.
+#
+# model_name is what Claude Code sends; litellm_params.model is what LiteLLM
+# calls. Claude Code's model is pinned via ANTHROPIC_DEFAULT_*_MODEL, so these
+# names have to match those pins exactly.
+model_list:
+  - model_name: claude-opus-5
+    litellm_params:
+      model: bedrock/us.anthropic.claude-opus-5
+      aws_region_name: us-east-2
+
+  - model_name: claude-haiku-4-5
+    litellm_params:
+      model: bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0
+      aws_region_name: us-east-2
+
+  - model_name: claude-sonnet-4-6
+    litellm_params:
+      model: bedrock/us.anthropic.claude-sonnet-4-6
+      aws_region_name: us-east-2
+
+litellm_settings:
+  # Spend tracking is the point of decision #12: we want per-workspace and
+  # per-user cost partitioning from metadata the supervisor's proxy injects.
+  drop_params: true
+
+general_settings:
+  master_key: sk-lemul-spike
