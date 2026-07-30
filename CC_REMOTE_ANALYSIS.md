@@ -414,7 +414,7 @@ Both Bedrock surfaces (legacy `InvokeModel` and Mantle `bedrock-mantle.{region}.
 | Server-side `fallbacks` | Minor — client-side fallback pattern exists |
 | **WebSearch** | **Real — the only genuine loss.** CC docs: *"The WebSearch tool is not available on Amazon Bedrock."* |
 
-**Mitigation:** search MCP server (Brave / Tavily / Exa) baked into the image's `.mcp.json`.
+**Mitigation:** search MCP server (Brave / Tavily / Exa) baked into the image's `.mcp.json`. A customer-hosted gateway fronting the real Anthropic API would plausibly restore WebSearch outright (§12.4) — unverified, and not a reason to choose a gateway on its own.
 **To verify (S1):** WebFetch is client-side in CC and the docs only call out WebSearch — confirm empirically.
 
 ### 3.1 Model pinning is mandatory
@@ -744,6 +744,7 @@ Trade-off vs. proxying: structured events, real diffs, approval modals, mobile �
 | 9 | Default admission policy | `min_free_memory_mb` | Adapts to real usage rather than guessing a session count. Needs the supervisor's headroom reporter (§2.4). |
 | 10 | Default session data path | **DECIDED: `relay` + E2E** (§2.7, assumption A2/A3) | Relay-only in v0.1 — assume no customer VPN route. `direct` and `tailnet` deferred but reachable without rework via endpoint negotiation. **Because there is no `direct` escape hatch, E2E is the first Phase 2 item, not a late one** (§1.3). |
 | 11 | Runner replica count in v0.1 | **Design for N, deploy 1** (§2.8) | `desiredCount: 1` self-heals in ~30–60 s and the runner is control-only, so the exposure is "cannot create a workspace" for under a minute. Run 2 in our own test tenant so the multi-tunnel path is exercised. |
+| 12 | Inference provider: Bedrock only, or also a customer-hosted gateway? | **Support a customer-hosted gateway; adopt the provider shape now, build later** | Claude Code already supports it natively (`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_CUSTOM_HEADERS`, `CLAUDE_CODE_USE_VERTEX` — all verified present in 2.1.220). **Customer-hosted only**: hosting it ourselves is §1.2 Option B, already rejected. Full analysis in §12.4. |
 
 ### 12.3 ~~Where does the Bedrock preflight run?~~ **DECIDED: supervisor, plus a standalone binary for onboarding** (2026-07-29)
 
@@ -836,6 +837,101 @@ nothing to repaint, and nudging races its first frame — the child reads the
 shrunken width and renders one column narrow. Same class of bug as starting a PTY
 at 0×0, and just as easy to misattribute to the TUI. Caught by
 `e2e/fidelity_test.go:TestInitialSizeAppliedBeforeChildStarts`.
+
+### 12.4 Open: inference through a customer-hosted gateway (2026-07-30)
+
+Raised while an account's Bedrock entitlement was stuck, but it stands on its own
+merits — the entitlement mess is a bad reason to reorder a roadmap, and a good
+reason to notice a gap.
+
+**The mechanism already exists.** Claude Code 2.1.220 supports pointing at any
+Anthropic-Messages-compatible endpoint, verified by inspecting the shipped binary:
+`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`,
+`ANTHROPIC_CUSTOM_HEADERS`, plus `CLAUDE_CODE_USE_VERTEX` and
+`ANTHROPIC_VERTEX_BASE_URL`. Our `image/entrypoint.sh` already renders managed
+settings from environment, so this is a switch in that renderer rather than new
+architecture.
+
+**Customer-hosted only.** A gateway the customer runs (LiteLLM or similar, in
+their VPC) preserves every property the Bedrock decision was made for: their
+data, their credentials, their spend, their egress policy — and it is arguably
+*better* on a "no public egress from workspace subnets" control, since the
+gateway is in-VPC rather than across an interface endpoint. A gateway **we** host
+is §1.2 Option B (own the org, resell tokens), rejected for margin exposure, and
+it would also put us on the content path that §2.7 exists to keep us off. That
+rejection stands.
+
+**The commercial argument is stronger than the technical one.** Many enterprises
+already mandate an LLM gateway — it is where they do cost attribution, guardrails
+and PII filtering. For those buyers "you must use Bedrock" is a hard blocker and
+"point us at your existing gateway" is an easy yes. Two smaller upsides: Vertex
+comes nearly free, and a gateway fronting the real Anthropic API would plausibly
+restore **WebSearch**, the one genuine feature loss on Bedrock (§3) — worth
+verifying rather than assuming.
+
+#### The credential problem, and the design that solves it
+
+Bedrock mode takes credentials from the task role through the container
+credential provider: temporary, rotated, never a static secret. Gateway mode puts
+a bearer token in the environment — and the session's own bash can read it. Claude
+Code runs LLM-generated code, so that is a materially worse exposure and must not
+arrive quietly.
+
+**The supervisor holds the credential and runs a loopback proxy.** Sessions get
+`ANTHROPIC_BASE_URL=http://127.0.0.1:<port>`; the supervisor adds the auth header
+and forwards to the real gateway. The token never enters the session environment.
+The supervisor is inside the customer's account, so this does not touch the "we
+cannot read your content" claim.
+
+Two design constraints on that proxy:
+
+- **Headers only; never touch the request body.** Rewriting JSON to inject
+  metadata would break SSE streaming and put us inside message content — the same
+  reason the relay is byte-transparent. LiteLLM accepts metadata via headers.
+- **A loopback port per session**, with the supervisor mapping port → session.
+  The obvious alternative — per-session `ANTHROPIC_CUSTOM_HEADERS` — lives in the
+  session's own environment and can be rewritten by the session, which is fine
+  for curiosity and not fine if costs become chargebacks. A port mapping is
+  bookkeeping the agent cannot influence. Sessions can reach each other's ports,
+  but they already share a filesystem and a task: same trust boundary.
+
+#### What the proxy buys beyond credential hygiene
+
+**Two independent cost signals.** Claude Code's self-reported `cost_usd_micros`
+via OTel (§5.3), and the gateway's own accounting keyed on injected workspace and
+user metadata. One is what the agent thinks it spent; the other is what the
+customer is actually billed, in their own FinOps tooling. Being able to reconcile
+those is a materially stronger billing position than either alone.
+
+**A second idle signal, free.** The proxy sees every model call, which is an
+immediate and independent "agent is working" indicator. §2.4's idle detection
+currently rests entirely on OTel `active_time.total{type=cli}`; this backstops it
+with no new instrumentation.
+
+#### The asymmetry to remember
+
+This is **gateway-mode only**. In Bedrock mode Claude Code signs with SigV4
+against the real endpoint host, so a loopback proxy invalidates the signature
+unless we re-sign — which means holding AWS credentials in the proxy and
+reimplementing signing. `ANTHROPIC_BEDROCK_BASE_URL` exists in the binary, so it
+may be possible, but do not assume symmetry. Bedrock keeps OTel-only attribution,
+which is what §5.3 already promises.
+
+#### What to do now
+
+**Not build it.** Adopt the shape, for the same reason the driver interface exists
+— cheap now, expensive to retrofit:
+
+1. Put the preflight behind a `Provider` interface. It is Bedrock-specific today
+   (`GetFoundationModelAvailability` + `InvokeModel`); a gateway preflight is a
+   one-token `POST /v1/messages`. Same three layers, different mechanics.
+2. Rename the Bedrock-specific configuration to a provider concept
+   (`LEMUL_PROVIDER=bedrock|gateway`, pins becoming provider-scoped) before more
+   code accretes around `LEMUL_BEDROCK`.
+
+**This must not displace the `ecs` driver.** Phase 1's exit criterion is a real
+Fargate sandbox; provider flexibility is Phase 3 territory (per-tenant
+configuration).
 
 ### 12.1 Questions for the first customer conversation
 
