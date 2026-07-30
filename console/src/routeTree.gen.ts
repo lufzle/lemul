@@ -9,87 +9,188 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as IndexRouteImport } from './routes/index'
-import { Route as WorkspacesWidRouteImport } from './routes/workspaces.$wid'
-import { Route as WorkspacesWidSessionsSidRouteImport } from './routes/workspaces.$wid_.sessions.$sid'
+import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
+import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index'
+import { Route as AuthenticatedWorkspacesWidRouteImport } from './routes/_authenticated/workspaces.$wid'
+import { Route as ApiAuthCallbackRouteImport } from './routes/api.auth.callback'
+import { Route as ApiAuthSignInRouteImport } from './routes/api.auth.sign-in'
+import { Route as ApiAuthSignOutRouteImport } from './routes/api.auth.sign-out'
+import { Route as AuthenticatedWorkspacesWidSessionsSidRouteImport } from './routes/_authenticated/workspaces.$wid_.sessions.$sid'
 
-const IndexRoute = IndexRouteImport.update({
+const AuthenticatedRoute = AuthenticatedRouteImport.update({
+  id: '/_authenticated',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthenticatedIndexRoute = AuthenticatedIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedWorkspacesWidRoute =
+  AuthenticatedWorkspacesWidRouteImport.update({
+    id: '/workspaces/$wid',
+    path: '/workspaces/$wid',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const ApiAuthCallbackRoute = ApiAuthCallbackRouteImport.update({
+  id: '/api/auth/callback',
+  path: '/api/auth/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
-const WorkspacesWidRoute = WorkspacesWidRouteImport.update({
-  id: '/workspaces/$wid',
-  path: '/workspaces/$wid',
+const ApiAuthSignInRoute = ApiAuthSignInRouteImport.update({
+  id: '/api/auth/sign-in',
+  path: '/api/auth/sign-in',
   getParentRoute: () => rootRouteImport,
 } as any)
-const WorkspacesWidSessionsSidRoute =
-  WorkspacesWidSessionsSidRouteImport.update({
+const ApiAuthSignOutRoute = ApiAuthSignOutRouteImport.update({
+  id: '/api/auth/sign-out',
+  path: '/api/auth/sign-out',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthenticatedWorkspacesWidSessionsSidRoute =
+  AuthenticatedWorkspacesWidSessionsSidRouteImport.update({
     id: '/workspaces/$wid_/sessions/$sid',
     path: '/workspaces/$wid/sessions/$sid',
-    getParentRoute: () => rootRouteImport,
+    getParentRoute: () => AuthenticatedRoute,
   } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
-  '/workspaces/$wid': typeof WorkspacesWidRoute
-  '/workspaces/$wid/sessions/$sid': typeof WorkspacesWidSessionsSidRoute
+  '/': typeof AuthenticatedIndexRoute
+  '/workspaces/$wid': typeof AuthenticatedWorkspacesWidRoute
+  '/api/auth/callback': typeof ApiAuthCallbackRoute
+  '/api/auth/sign-in': typeof ApiAuthSignInRoute
+  '/api/auth/sign-out': typeof ApiAuthSignOutRoute
+  '/workspaces/$wid/sessions/$sid': typeof AuthenticatedWorkspacesWidSessionsSidRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
-  '/workspaces/$wid': typeof WorkspacesWidRoute
-  '/workspaces/$wid/sessions/$sid': typeof WorkspacesWidSessionsSidRoute
+  '/': typeof AuthenticatedIndexRoute
+  '/workspaces/$wid': typeof AuthenticatedWorkspacesWidRoute
+  '/api/auth/callback': typeof ApiAuthCallbackRoute
+  '/api/auth/sign-in': typeof ApiAuthSignInRoute
+  '/api/auth/sign-out': typeof ApiAuthSignOutRoute
+  '/workspaces/$wid/sessions/$sid': typeof AuthenticatedWorkspacesWidSessionsSidRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
-  '/workspaces/$wid': typeof WorkspacesWidRoute
-  '/workspaces/$wid_/sessions/$sid': typeof WorkspacesWidSessionsSidRoute
+  '/_authenticated': typeof AuthenticatedRouteWithChildren
+  '/_authenticated/': typeof AuthenticatedIndexRoute
+  '/_authenticated/workspaces/$wid': typeof AuthenticatedWorkspacesWidRoute
+  '/api/auth/callback': typeof ApiAuthCallbackRoute
+  '/api/auth/sign-in': typeof ApiAuthSignInRoute
+  '/api/auth/sign-out': typeof ApiAuthSignOutRoute
+  '/_authenticated/workspaces/$wid_/sessions/$sid': typeof AuthenticatedWorkspacesWidSessionsSidRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/workspaces/$wid' | '/workspaces/$wid/sessions/$sid'
+  fullPaths:
+    | '/'
+    | '/workspaces/$wid'
+    | '/api/auth/callback'
+    | '/api/auth/sign-in'
+    | '/api/auth/sign-out'
+    | '/workspaces/$wid/sessions/$sid'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/workspaces/$wid' | '/workspaces/$wid/sessions/$sid'
-  id: '__root__' | '/' | '/workspaces/$wid' | '/workspaces/$wid_/sessions/$sid'
+  to:
+    | '/'
+    | '/workspaces/$wid'
+    | '/api/auth/callback'
+    | '/api/auth/sign-in'
+    | '/api/auth/sign-out'
+    | '/workspaces/$wid/sessions/$sid'
+  id:
+    | '__root__'
+    | '/_authenticated'
+    | '/_authenticated/'
+    | '/_authenticated/workspaces/$wid'
+    | '/api/auth/callback'
+    | '/api/auth/sign-in'
+    | '/api/auth/sign-out'
+    | '/_authenticated/workspaces/$wid_/sessions/$sid'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
-  WorkspacesWidRoute: typeof WorkspacesWidRoute
-  WorkspacesWidSessionsSidRoute: typeof WorkspacesWidSessionsSidRoute
+  AuthenticatedRoute: typeof AuthenticatedRouteWithChildren
+  ApiAuthCallbackRoute: typeof ApiAuthCallbackRoute
+  ApiAuthSignInRoute: typeof ApiAuthSignInRoute
+  ApiAuthSignOutRoute: typeof ApiAuthSignOutRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/': {
-      id: '/'
+    '/_authenticated': {
+      id: '/_authenticated'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof AuthenticatedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_authenticated/': {
+      id: '/_authenticated/'
       path: '/'
       fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof AuthenticatedIndexRouteImport
+      parentRoute: typeof AuthenticatedRoute
     }
-    '/workspaces/$wid': {
-      id: '/workspaces/$wid'
+    '/_authenticated/workspaces/$wid': {
+      id: '/_authenticated/workspaces/$wid'
       path: '/workspaces/$wid'
       fullPath: '/workspaces/$wid'
-      preLoaderRoute: typeof WorkspacesWidRouteImport
+      preLoaderRoute: typeof AuthenticatedWorkspacesWidRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/api/auth/callback': {
+      id: '/api/auth/callback'
+      path: '/api/auth/callback'
+      fullPath: '/api/auth/callback'
+      preLoaderRoute: typeof ApiAuthCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/workspaces/$wid_/sessions/$sid': {
-      id: '/workspaces/$wid_/sessions/$sid'
+    '/api/auth/sign-in': {
+      id: '/api/auth/sign-in'
+      path: '/api/auth/sign-in'
+      fullPath: '/api/auth/sign-in'
+      preLoaderRoute: typeof ApiAuthSignInRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/auth/sign-out': {
+      id: '/api/auth/sign-out'
+      path: '/api/auth/sign-out'
+      fullPath: '/api/auth/sign-out'
+      preLoaderRoute: typeof ApiAuthSignOutRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_authenticated/workspaces/$wid_/sessions/$sid': {
+      id: '/_authenticated/workspaces/$wid_/sessions/$sid'
       path: '/workspaces/$wid/sessions/$sid'
       fullPath: '/workspaces/$wid/sessions/$sid'
-      preLoaderRoute: typeof WorkspacesWidSessionsSidRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof AuthenticatedWorkspacesWidSessionsSidRouteImport
+      parentRoute: typeof AuthenticatedRoute
     }
   }
 }
 
+interface AuthenticatedRouteChildren {
+  AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
+  AuthenticatedWorkspacesWidRoute: typeof AuthenticatedWorkspacesWidRoute
+  AuthenticatedWorkspacesWidSessionsSidRoute: typeof AuthenticatedWorkspacesWidSessionsSidRoute
+}
+
+const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
+  AuthenticatedIndexRoute: AuthenticatedIndexRoute,
+  AuthenticatedWorkspacesWidRoute: AuthenticatedWorkspacesWidRoute,
+  AuthenticatedWorkspacesWidSessionsSidRoute:
+    AuthenticatedWorkspacesWidSessionsSidRoute,
+}
+
+const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
+  AuthenticatedRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
-  WorkspacesWidRoute: WorkspacesWidRoute,
-  WorkspacesWidSessionsSidRoute: WorkspacesWidSessionsSidRoute,
+  AuthenticatedRoute: AuthenticatedRouteWithChildren,
+  ApiAuthCallbackRoute: ApiAuthCallbackRoute,
+  ApiAuthSignInRoute: ApiAuthSignInRoute,
+  ApiAuthSignOutRoute: ApiAuthSignOutRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

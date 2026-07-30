@@ -11,7 +11,7 @@ import {
 import { getFlags } from '#/lib/flags'
 import { Button, Dot, Panel, useAutoRefresh } from '#/components/ui'
 
-export const Route = createFileRoute('/workspaces/$wid')({
+export const Route = createFileRoute('/_authenticated/workspaces/$wid')({
   loader: async ({ params }) => ({
     wid: params.wid,
     sessions: await listSessions({ data: { wid: params.wid } }),

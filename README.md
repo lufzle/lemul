@@ -248,6 +248,40 @@ supervisor, from the workspace volume**, never by a control-plane flag: the two
 flags fail in each other's case, and a replacement task's disk is empty while any
 flag we stored would still say "started". §12.7 has the measurements.
 
+## Authentication
+
+Optional and off unless configured. Set up the local identity provider —
+Logto + Mailpit, config fully scripted — with
+[`auth-stack/`](auth-stack/README.md):
+
+```bash
+docker compose -f auth-stack/docker-compose.yml up -d
+bun auth-stack/seed.ts > auth-stack/.env.generated
+set -a; . auth-stack/.env.generated; set +a
+```
+
+Then the control plane validates bearer tokens on the management API
+(`internal/auth`: signature via JWKS, issuer, audience, expiry — **no scope
+checks**, because there is no user model to check against yet):
+
+```bash
+bin/controlplane -auth-issuer "$LEMUL_AUTH_ISSUER" -auth-audience "$LEMUL_AUTH_AUDIENCE" …
+ourcli login          # OAuth device flow (RFC 8628); approve in a browser
+```
+
+Two endpoints stay unauthenticated on purpose: `/v1/tunnel/*`, where the runner
+and workspace tasks present their own credentials and have no user to be, and
+`/v1/sessions/{sid}/attach`, which carries a single-use attach credential —
+a browser cannot set an `Authorization` header on a WebSocket handshake, so
+requiring one would make the console's viewer impossible.
+
+**Authentication is not authorisation.** Anyone who can sign in reaches every
+workspace; §2.5's owner-scoped attach is still outstanding. Loopback is what
+bounds that today.
+
+With no issuer configured, everything behaves exactly as before — which is what
+keeps the e2e suite running without an identity provider.
+
 ## Operator console
 
 ```bash

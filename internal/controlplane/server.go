@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/lufzle/lemul-cc/internal/auth"
 	"github.com/lufzle/lemul-cc/internal/registry"
 	"github.com/lufzle/lemul-cc/internal/store"
 )
@@ -72,6 +73,12 @@ type Options struct {
 	Region string
 	// Pins as "role=modelID" pairs; empty uses the defaults.
 	Pins string
+
+	// AuthIssuer and AuthAudience turn on bearer-token validation for the
+	// management API. Empty issuer leaves it off, which is what keeps the e2e
+	// suite and local runs working without an identity provider (internal/auth).
+	AuthIssuer   string
+	AuthAudience string
 }
 
 type Server struct {
@@ -80,6 +87,7 @@ type Server struct {
 	st         store.Store
 	creds      *credentials
 	preflights *preflightStore
+	auth       *auth.Verifier
 
 	// ensureLocks serialises placement per workspace. Without it two concurrent
 	// session creations would each take a new generation and place a task, and a
@@ -88,7 +96,10 @@ type Server struct {
 	ensureLocks sync.Map // workspace id -> *sync.Mutex
 }
 
-func New(o Options) *Server {
+// New builds the server. It returns an error only for configuration that cannot
+// work at all -- an issuer without an audience -- rather than for anything the
+// identity provider might be doing, which is checked lazily per request.
+func New(o Options) (*Server, error) {
 	if o.StartTimeout <= 0 {
 		o.StartTimeout = 90 * time.Second
 	}
@@ -98,30 +109,51 @@ func New(o Options) *Server {
 	if o.TenantID == "" {
 		o.TenantID = "t1"
 	}
+	v, err := auth.New(auth.Options{Issuer: o.AuthIssuer, Audience: o.AuthAudience})
+	if err != nil {
+		return nil, err
+	}
 	return &Server{
 		opt:        o,
 		reg:        registry.New(),
 		st:         o.Store,
 		creds:      newCredentials(),
 		preflights: newPreflightStore(),
-	}
+		auth:       v,
+	}, nil
 }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+
+	// Unauthenticated by design, and each for its own reason.
+	//
+	// The tunnel endpoints are how the runner and each workspace task dial in.
+	// They present the agent token and the workspace credential; they are
+	// machines, with no user to be signed in as.
+	//
+	// The attach WebSocket already carries a single-use credential minted by
+	// endpoint negotiation -- and a browser cannot set an Authorization header
+	// on a WebSocket handshake, so requiring a bearer here would make the
+	// console's viewer impossible to build rather than merely inconvenient.
 	mux.HandleFunc("GET /v1/tunnel/runner", s.handleRunnerTunnel)
 	mux.HandleFunc("GET /v1/tunnel/workspace", s.handleWorkspaceTunnel)
-	mux.HandleFunc("GET /v1/status", s.handleStatus)
-	mux.HandleFunc("GET /v1/workspaces", s.handleListWorkspaces)
-	mux.HandleFunc("GET /v1/workspaces/{wid}", s.handleGetWorkspace)
-	mux.HandleFunc("POST /v1/workspaces/{wid}/sessions", s.handleCreateSession)
-	mux.HandleFunc("GET /v1/workspaces/{wid}/sessions", s.handleListSessions)
-	mux.HandleFunc("GET /v1/workspaces/{wid}/preflight", s.handlePreflight)
-	mux.HandleFunc("GET /v1/sessions/{sid}/endpoint", s.handleEndpoint)
 	mux.HandleFunc("GET /v1/sessions/{sid}/attach", s.handleAttach)
-	mux.HandleFunc("POST /v1/sessions/{sid}/stop", s.handleStopSession)
-	mux.HandleFunc("POST /v1/sessions/{sid}/resume", s.handleResumeSession)
-	mux.HandleFunc("DELETE /v1/sessions/{sid}", s.handleDeleteSession)
+
+	// The management API. Wrapped individually rather than by path prefix so
+	// that adding an endpoint without protecting it is a visible omission at
+	// the call site instead of a silent gap in a matcher.
+	protect := s.auth.Wrap
+	mux.HandleFunc("GET /v1/status", protect(s.handleStatus))
+	mux.HandleFunc("GET /v1/workspaces", protect(s.handleListWorkspaces))
+	mux.HandleFunc("GET /v1/workspaces/{wid}", protect(s.handleGetWorkspace))
+	mux.HandleFunc("POST /v1/workspaces/{wid}/sessions", protect(s.handleCreateSession))
+	mux.HandleFunc("GET /v1/workspaces/{wid}/sessions", protect(s.handleListSessions))
+	mux.HandleFunc("GET /v1/workspaces/{wid}/preflight", protect(s.handlePreflight))
+	mux.HandleFunc("GET /v1/sessions/{sid}/endpoint", protect(s.handleEndpoint))
+	mux.HandleFunc("POST /v1/sessions/{sid}/stop", protect(s.handleStopSession))
+	mux.HandleFunc("POST /v1/sessions/{sid}/resume", protect(s.handleResumeSession))
+	mux.HandleFunc("DELETE /v1/sessions/{sid}", protect(s.handleDeleteSession))
 	return mux
 }
 

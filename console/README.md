@@ -11,12 +11,33 @@ LEMUL_API=http://127.0.0.1:9000 bun run dev   # if the control plane is elsewher
 
 It needs a running control plane; it holds no state of its own.
 
-## No auth — this binds to loopback on purpose
+## Sign-in
 
-Phase 1 has no authentication anywhere, and `CC_REMOTE_ANALYSIS.md` §2.5 records
-that `GET /v1/sessions/{sid}/endpoint` will mint an attach credential for **any**
-session id to anyone who can reach it. This console is a thin skin over that API,
-so exposing it is exactly as bad as exposing the control plane.
+Passwordless email through Logto — see [`../auth-stack`](../auth-stack/README.md).
+Start the stack, seed it, and run the console with the generated variables:
+
+```bash
+set -a; . ../auth-stack/.env.generated; set +a
+bun run dev
+```
+
+Unset `LOGTO_*` and the console runs unauthenticated, exactly as before.
+
+**Where the security boundary actually is.** Not the `_authenticated` route
+guard — server functions are RPC endpoints reachable by direct POST no matter
+what the router is showing, so a `beforeLoad` redirect protects the page and
+nothing else. What protects the data is that `lib/control-plane.ts` cannot call
+the control plane without an access token, and the token only exists if the
+session cookie does. The Go side then validates that token independently. Two
+layers, neither trusting the other, and no per-function check anyone can forget
+to attach.
+
+## No *authorisation* — this still binds to loopback on purpose
+
+Signing in is now real, but there is no authorisation behind it: no scopes, no
+per-user scoping, and `CC_REMOTE_ANALYSIS.md` §2.5 still records that
+`GET /v1/sessions/{sid}/endpoint` mints an attach credential for **any** session
+id. Anyone who can sign in reaches every workspace and every session.
 
 `vite.config.ts` therefore pins `server.host` and `preview.host` to `127.0.0.1`.
 That is a deliberate control, not a default — do not widen it before Phase 3

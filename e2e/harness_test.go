@@ -79,13 +79,18 @@ func newStack(t *testing.T, sessionCmd ...string) *stack {
 		t.Fatalf("store: %v", err)
 	}
 
-	cp := controlplane.New(controlplane.Options{
+	// No AuthIssuer: the suite runs without an identity provider, which is the
+	// case internal/auth's opt-in design exists to keep working.
+	cp, err := controlplane.New(controlplane.Options{
 		Store:        st,
 		AgentToken:   testToken,
 		TenantID:     "t1",
 		SessionCmd:   sessionCmd,
 		StartTimeout: 30 * time.Second,
 	})
+	if err != nil {
+		t.Fatalf("control plane: %v", err)
+	}
 	srv := httptest.NewServer(cp.Handler())
 	t.Cleanup(srv.Close)
 

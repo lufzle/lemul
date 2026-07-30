@@ -4,7 +4,7 @@ import { getFlags } from '#/lib/flags'
 import { Panel } from '#/components/ui'
 import { Viewer } from '#/components/Viewer'
 
-export const Route = createFileRoute('/workspaces/$wid_/sessions/$sid')({
+export const Route = createFileRoute('/_authenticated/workspaces/$wid_/sessions/$sid')({
   loader: async ({ params }) => {
     // Gated here as well as on the button. Hiding the link alone would leave the
     // route reachable by URL, which makes the flag decoration rather than a

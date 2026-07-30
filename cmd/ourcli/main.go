@@ -61,13 +61,42 @@ func main() {
 		fmt.Fprintf(os.Stderr, "       ourcli ls      <workspace>\n")
 		fmt.Fprintf(os.Stderr, "       ourcli stop    <workspace> -session <id>\n")
 		fmt.Fprintf(os.Stderr, "       ourcli resume  <workspace> -session <id>\n")
-		fmt.Fprintf(os.Stderr, "       ourcli rm      <workspace> -session <id> [-force]\n\n")
+		fmt.Fprintf(os.Stderr, "       ourcli rm      <workspace> -session <id> [-force]\n")
+		fmt.Fprintf(os.Stderr, "       ourcli login | logout | whoami\n\n")
 		fmt.Fprintf(os.Stderr, "-session accepts any unique prefix of a session id.\n\n")
 		fs.PrintDefaults()
 	}
 	fs.Usage = usage
 
 	args := os.Args[1:]
+	if len(args) == 0 {
+		usage()
+		os.Exit(2)
+	}
+
+	// The auth verbs take no workspace, so they are dispatched before the
+	// positional-argument rule that every other command follows.
+	switch args[0] {
+	case "login", "logout", "whoami":
+		if err := fs.Parse(args[1:]); err != nil {
+			os.Exit(2)
+		}
+		var err error
+		switch args[0] {
+		case "login":
+			err = runLogin()
+		case "logout":
+			err = runLogout()
+		case "whoami":
+			fmt.Println(authStatus())
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ourcli: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if len(args) < 2 || strings.HasPrefix(args[1], "-") {
 		usage()
 		os.Exit(2)
@@ -157,7 +186,7 @@ func run(workspace string) error {
 
 func createSession(workspace string) (string, error) {
 	u := strings.TrimRight(*server, "/") + "/v1/workspaces/" + neturl.PathEscape(workspace) + "/sessions"
-	resp, err := http.Post(u, "application/json", nil)
+	resp, err := request(http.MethodPost, u, nil)
 	if err != nil {
 		return "", fmt.Errorf("create session: %w", err)
 	}
@@ -177,7 +206,7 @@ func createSession(workspace string) (string, error) {
 
 func negotiate(sid string) (endpoint, error) {
 	u := strings.TrimRight(*server, "/") + "/v1/sessions/" + neturl.PathEscape(sid) + "/endpoint"
-	resp, err := http.Get(u)
+	resp, err := request(http.MethodGet, u, nil)
 	if err != nil {
 		return endpoint{}, fmt.Errorf("endpoint: %w", err)
 	}

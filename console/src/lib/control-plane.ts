@@ -18,8 +18,31 @@ function apiBase(): string {
   return process.env.LEMUL_API ?? 'http://127.0.0.1:9000'
 }
 
+/**
+ * Every call to the control plane, carrying the caller's access token.
+ *
+ * The token is what makes authorisation structural here rather than a check
+ * someone has to remember. Server functions are RPC endpoints reachable by a
+ * direct POST regardless of which route renders the UI, so a route guard
+ * protects nothing — but a server function cannot reach the control plane
+ * without a token, and the token only exists if the session cookie does. The Go
+ * side then validates it independently (internal/auth), so there are two
+ * layers and neither trusts the other.
+ *
+ * The import is deferred, not top-level: logto.server.ts reaches into
+ * `@tanstack/react-start/server`, and a module-scope import of it from a file
+ * that routes import fails the client build outright.
+ */
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(apiBase() + path, init)
+  const { accessToken } = await import('./logto.server')
+  const token = await accessToken()
+  const res = await fetch(apiBase() + path, {
+    ...init,
+    headers: {
+      ...init?.headers,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  })
   const body = await res.text()
   if (!res.ok) {
     // The control plane's errors are the useful part -- a 424 carries the

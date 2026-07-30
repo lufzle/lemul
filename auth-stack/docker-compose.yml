@@ -1,0 +1,59 @@
+# Local identity provider for the operator console.
+#
+# Logto issues the tokens; Mailpit catches the passwordless sign-in codes so
+# nothing leaves the machine and no real mailbox is needed. Same shape as
+# litellm-spike/ and otel-stack/: a local stand-in for something the customer
+# runs, wired the way the real thing will be.
+#
+# Ports were picked around what already squats on this machine (the analysis
+# doc's list: OrbStack takes 4318, Chrome DevTools takes 9222). 3000 is the
+# console's own dev server, so Logto sits above it.
+services:
+  db:
+    image: postgres:17-alpine
+    user: postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: p0stgr3s
+      POSTGRES_DB: logto
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - logtodb:/var/lib/postgresql/data
+
+  logto:
+    image: svhd/logto:1.42
+    depends_on:
+      db:
+        condition: service_healthy
+    # `db seed --swe` is idempotent and creates the schema plus the built-in
+    # admin tenant on first boot; on later boots it is a no-op, so the same
+    # command serves a fresh volume and an existing one.
+    entrypoint: ["sh", "-c", "npm run cli db seed -- --swe && npm start"]
+    ports:
+      - "3001:3001" # OIDC endpoint: issuer, JWKS, token, device authorization
+      - "3002:3002" # admin console
+    environment:
+      TRUST_PROXY_HEADER: "1"
+      DB_URL: postgres://postgres:p0stgr3s@db:5432/logto
+      # Both must be absolute URLs that resolve identically from the browser,
+      # the console's server process and the Go control plane -- the issuer in a
+      # token is compared as a string, so "localhost" here and "127.0.0.1" in a
+      # validator is a mismatch that reads as an invalid token.
+      ENDPOINT: http://localhost:3001
+      ADMIN_ENDPOINT: http://localhost:3002
+
+  mailpit:
+    image: axllent/mailpit:v1.30
+    ports:
+      - "8025:8025" # web UI: where the sign-in codes show up
+      - "1025:1025" # SMTP, for Logto's connector
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+
+volumes:
+  logtodb:

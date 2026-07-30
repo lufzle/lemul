@@ -24,7 +24,7 @@ type sessionDoc struct {
 // the workspace, so it is safe to call before deciding what to do.
 func listSessions(workspace string) ([]sessionDoc, error) {
 	u := strings.TrimRight(*server, "/") + "/v1/workspaces/" + neturl.PathEscape(workspace) + "/sessions"
-	resp, err := http.Get(u)
+	resp, err := request(http.MethodGet, u, nil)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions: %w", err)
 	}
@@ -153,7 +153,7 @@ func postSession(workspace, want, verb string, force bool) error {
 	if force {
 		u += "?force=1"
 	}
-	resp, err := http.Post(u, "application/json", nil)
+	resp, err := request(http.MethodPost, u, nil)
 	if err != nil {
 		return fmt.Errorf("%s: %w", verb, err)
 	}
@@ -182,11 +182,7 @@ func deleteSession(workspace, want string, force bool) error {
 	if force {
 		u += "?force=1"
 	}
-	req, err := http.NewRequest(http.MethodDelete, u, nil)
-	if err != nil {
-		return err
-	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := request(http.MethodDelete, u, nil)
 	if err != nil {
 		return fmt.Errorf("delete: %w", err)
 	}

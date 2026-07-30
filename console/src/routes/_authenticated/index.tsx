@@ -2,7 +2,7 @@ import { Link, createFileRoute } from '@tanstack/react-router'
 import { getStatus, listWorkspaces } from '#/lib/control-plane'
 import { Dot, Panel, useAutoRefresh } from '#/components/ui'
 
-export const Route = createFileRoute('/')({
+export const Route = createFileRoute('/_authenticated/')({
   loader: async () => ({
     status: await getStatus(),
     workspaces: await listWorkspaces(),

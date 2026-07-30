@@ -6,6 +6,7 @@ import (
 	"flag"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -35,6 +36,14 @@ func main() {
 		bedrockPre   = flag.Bool("bedrock-preflight", false, "workspace tasks check their pinned Bedrock models at start")
 		region       = flag.String("region", "", "AWS region for workspace tasks")
 		pins         = flag.String("pins", "", "comma-separated role=modelID pins; empty uses the defaults")
+		// Bearer-token validation for the management API. Both default to the
+		// environment so the console, ourcli and this process can be pointed at
+		// one identity provider from a single generated env file
+		// (auth-stack/seed.ts). Empty issuer leaves authentication off.
+		authIssuer = flag.String("auth-issuer", os.Getenv("LEMUL_AUTH_ISSUER"),
+			"OIDC issuer for management API tokens (empty disables authentication)")
+		authAudience = flag.String("auth-audience", os.Getenv("LEMUL_AUTH_AUDIENCE"),
+			"API resource indicator tokens must be minted for")
 	)
 	flag.Parse()
 	log.SetPrefix("controlplane: ")
@@ -49,7 +58,7 @@ func main() {
 		pub = "ws://localhost" + *addr
 	}
 
-	s := controlplane.New(controlplane.Options{
+	s, err := controlplane.New(controlplane.Options{
 		Store:        st,
 		AgentToken:   *agentToken,
 		TenantID:     *tenantID,
@@ -67,7 +76,17 @@ func main() {
 		BedrockPreflight: *bedrockPre,
 		Region:           *region,
 		Pins:             *pins,
+		AuthIssuer:       *authIssuer,
+		AuthAudience:     *authAudience,
 	})
+	if err != nil {
+		log.Fatalf("control plane: %v", err)
+	}
+	if *authIssuer != "" {
+		log.Printf("management API requires a bearer token from %s (audience %s)", *authIssuer, *authAudience)
+	} else {
+		log.Printf("management API is UNAUTHENTICATED (no -auth-issuer configured)")
+	}
 
 	srv := &http.Server{
 		Addr:    *addr,
