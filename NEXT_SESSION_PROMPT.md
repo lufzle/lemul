@@ -85,7 +85,8 @@ writing code; I'd rather agree on structure first.
   `AUTHORIZED` for `us.anthropic.claude-opus-5` and haiku 4.5.
   The `dario` profile has **no** model access (FTU form denied, needs an AWS support
   case) — do not use it.
-- Not a git repo yet. Worth `git init` early.
+- Git repo initialised, `main`, **local only — no remote, nothing pushed.** Two commits:
+  Phase 0 work, and decision #4. Commit as you go.
 - Per `~/.claude/CLAUDE.md`: journal completed work to
   `~/w/.claude-journal/lufzle-lemul-cc.md` as `{YYMMddTHHmm}: {description}`.
 
