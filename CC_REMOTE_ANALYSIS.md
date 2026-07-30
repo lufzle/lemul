@@ -566,6 +566,12 @@ Config goes in the **managed settings file**, baked into the image. Env vars the
 
 **Gap to close:** exporter *selectors* (`OTEL_METRICS_EXPORTER`, `OTEL_LOGS_EXPORTER`) follow normal per-key precedence — a user could set `none` and silence a signal. **Set the selectors in managed settings too.**
 
+> **Enforcement verified 2026-07-30** (`otel-stack/README.md`). Passing
+> `-e OTEL_EXPORTER_OTLP_ENDPOINT=…` into a running workspace had **no effect** —
+> telemetry still went where managed settings said. Redaction verified in the same
+> pass: a 54-character prompt arrived as `prompt='<REDACTED>'` with
+> `prompt_length=54`. Both were previously listed as untested.
+
 Lock-down list: `CLAUDE_CODE_ENABLE_TELEMETRY=1`, both exporter selectors, `OTEL_EXPORTER_OTLP_PROTOCOL`, `_ENDPOINT`, `_HEADERS`.
 
 ### 5.3 What we get with content logging OFF

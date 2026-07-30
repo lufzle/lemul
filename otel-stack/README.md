@@ -51,24 +51,50 @@ explicitly, because `OTEL_LOG_ASSISTANT_RESPONSES` silently falls back to
 > write-ahead log. Query the stream rather than trusting the stat — it cost me a
 > wrong conclusion once already.
 
-## Open: events are not arriving
+## Events do arrive — with one caveat
 
-**Metrics land; logs/events do not.** No `api_request`, `tool_result`,
-`tool_decision`, `permission_mode_changed` — which is exactly the audit half that
-justifies keeping telemetry at all after decision #12.
+Events land in the `default` **logs** stream, carrying `event_name`,
+`prompt_id`, `tenant_id`, `workspace_id`, `session_id` and per-event fields.
 
-Ruled out so far:
+**Two things verified live here, both of which the analysis had listed as
+unconfirmed:**
 
-- OpenObserve ingests logs fine — a hand-made OTLP/JSON `POST /v1/logs` returns
-  200 and creates the stream.
-- Not a flush-timing problem. Logs export every 5 s and metrics every 60 s
-  (§5.5), so if a short-lived process were losing batches, metrics would be the
-  casualty, not logs.
-- `OTEL_LOGS_EXPORTER=otlp` is present in the rendered managed settings.
+*Content redaction (§5.4).* A prompt of `"Run: echo hello. Then say DONE"`
+arrived as:
 
-Still to try: `http/protobuf` instead of `http/json` for the logs signal; a
-per-signal `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`; and whether the events S2 captured
-needed a longer interactive session than a headless `-p` run.
+```
+prompt        = '<REDACTED>'
+prompt_length = 54
+```
 
-S2 did capture these events against its own receiver
-(`otel-probe/RESULTS.md`), so they exist — the gap is in this delivery path.
+*Managed-settings enforcement (§5.2).* Passing `-e OTEL_EXPORTER_OTLP_ENDPOINT=…`
+to `docker exec` had **no effect** — telemetry still went where managed settings
+said. That is the mechanism the whole "admin-enforced telemetry" claim rests on,
+and it was previously untested.
+
+### The caveat: short-lived processes lose their last batch
+
+A headless `claude -p` run yields **`user_prompt` and nothing else** — no
+`api_request`, no `tool_result`. The likely reason is ordering against the 5 s
+log export interval: `user_prompt` fires at the *start* of a turn and gets
+flushed while the turn runs, whereas `api_request` and `tool_result` fire at the
+*end* and are still batched when the process exits.
+
+This is probably not a production problem — real sessions are long-lived PTYs
+that flush continuously — but it does mean **headless testing under-reports the
+audit trail**, so do not use `-p` to judge whether telemetry is complete. S2
+captured the full event set (`otel-probe/RESULTS.md`) from a longer session.
+
+Worth confirming against a genuinely long interactive session before relying on
+tool-level audit for a customer.
+
+## Two traps that cost time here
+
+**`doc_num` lies.** The streams API reports 0 while data sits in the write-ahead
+log. It led me to report the pipeline as broken **twice** when it was working.
+Query the stream; never trust the stat.
+
+**Managed settings win.** Since they cannot be overridden, `docker exec -e …`
+cannot redirect telemetry for a debugging run. To point a workspace at a
+different collector, restart the control plane with a different
+`-otel-endpoint` — that is the only lever.
