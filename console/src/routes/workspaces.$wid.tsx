@@ -8,6 +8,7 @@ import {
   resumeSession,
   stopSession,
 } from '#/lib/control-plane'
+import { getFlags } from '#/lib/flags'
 import { Button, Dot, Panel, useAutoRefresh } from '#/components/ui'
 
 export const Route = createFileRoute('/workspaces/$wid')({
@@ -15,6 +16,7 @@ export const Route = createFileRoute('/workspaces/$wid')({
     wid: params.wid,
     sessions: await listSessions({ data: { wid: params.wid } }),
     preflight: await getPreflight({ data: { wid: params.wid } }),
+    flags: await getFlags(),
   }),
   component: WorkspaceDetail,
   errorComponent: ({ error }) => (
@@ -25,7 +27,7 @@ export const Route = createFileRoute('/workspaces/$wid')({
 })
 
 function WorkspaceDetail() {
-  const { wid, sessions, preflight } = Route.useLoaderData()
+  const { wid, sessions, preflight, flags } = Route.useLoaderData()
   const router = useRouter()
   useAutoRefresh()
 
@@ -113,10 +115,10 @@ function WorkspaceDetail() {
                     <td className="px-2 py-2 text-neutral-400">{s.created_at}</td>
                     <td className="px-2 py-2">
                       <div className="flex justify-end gap-1.5">
-                        {/* Only offered while a process exists: there is no
-                            terminal to watch on a stopped session, and the ring
-                            dies with the PTY. */}
-                        {isRunning ? (
+                        {/* Behind FF_VIEW_SESSION, and only while a process
+                            exists: there is no terminal to watch on a stopped
+                            session, and the ring dies with the PTY. */}
+                        {flags.viewSession && isRunning ? (
                           <Link
                             to="/workspaces/$wid/sessions/$sid"
                             params={{ wid, sid: s.id }}

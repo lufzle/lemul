@@ -63,7 +63,22 @@ using Bedrock, and only a blocking report is a problem. A failing model shows th
 advice attached to it, since an IAM gap, a missing inference-profile prefix and
 an unfinished First Time Use form all look alike and have nothing in common.
 
-## The read-only viewer
+## The read-only viewer — off by default
+
+Behind `FF_VIEW_SESSION`, which **ships dark**:
+
+```bash
+FF_VIEW_SESSION=1 bun run dev
+```
+
+Unset, `0`, or anything unrecognised is off — a flag gating a capability should
+fail closed on a typo rather than guess the operator meant yes.
+
+It gates the **route** as well as the button. Hiding the link alone would leave
+the URL reachable and make the flag decoration; with the flag off the route
+answers 404 and the terminal component is never even loaded. The flag is read
+server-side for the same reason: a value that ships to the browser is one an
+operator can flip in devtools.
 
 `view` on a running session opens an xterm.js terminal on the existing
 `?mode=viewer` attach path — the same one `ourcli connect -mode viewer` uses, so
