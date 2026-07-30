@@ -116,19 +116,37 @@ This was invisible until `CLAUDE_CODE_OTEL_DIAG_STDERR=1` — exporter failures 
 otherwise swallowed unless you run with `--debug`. It is on by default in the
 image for exactly this reason.
 
-### Traces: enabled, but nothing is emitted
+### Traces: Claude Code 2.1.220 emits none
+
+Not a configuration problem on our side, and not worth more time.
 
 `-otel-traces` renders `OTEL_TRACES_EXPORTER=otlp`,
 `OTEL_TRACES_SAMPLER=always_on`, an export interval and
-`CLAUDE_CODE_PROPAGATE_TRACEPARENT` into managed settings — all confirmed present
-in a live workspace, now over protobuf with no exporter errors. **Claude Code
-2.1.220 still produces zero spans.**
+`CLAUDE_CODE_PROPAGATE_TRACEPARENT` into managed settings, all confirmed present
+in a live workspace with zero exporter errors.
 
-Ruled out: the receiver (a hand-made OTLP trace POST is accepted and creates the
-stream), sampling, export interval, the JSON parser, and trace-context
-propagation. Traces are documented as **beta** (§5) and S2 also listed them as an
-open gap. Re-check on a Claude Code upgrade; metrics and events already cover
-billing and audit.
+**Proved against a neutral receiver.** Pointed at the S2 probe, which accepts
+anything and writes one file per signal, with traces explicitly configured plus
+raised flush and shutdown timeouts, Claude Code produced:
+
+```
+0001-logs.json  0002-logs.json  0003-metrics.json     ← no traces payload, ever
+```
+
+Ruled out: the receiver, the protocol (`http/json` and `http/protobuf` both),
+sampling, export interval, flush and shutdown timeouts, and trace-context
+propagation.
+
+Traces are documented as **beta** (§5) and S2 listed them as an open gap. One
+plausible explanation left, which we cannot test from here: they may be gated
+behind a **server-side feature flag**, which a sandbox on a gateway connection
+with restricted egress would never receive — feature-flag fetching is
+Anthropic-bound and is exactly what `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`
+turns off.
+
+Re-check on a Claude Code upgrade. Metrics and events already cover billing and
+audit, and `--output-format stream-json` covers per-turn cost with no collector
+at all.
 
 ## Two traps that cost time here
 
