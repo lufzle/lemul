@@ -1,0 +1,16 @@
+services:
+  openobserve:
+    image: public.ecr.aws/zinclabs/openobserve:latest
+    environment:
+      ZO_ROOT_USER_EMAIL: admin@lemul.local
+      ZO_ROOT_USER_PASSWORD: Lemul-dev1!
+      ZO_DATA_DIR: /data
+      # Telemetry from Claude Code is metrics and logs/events, not traces
+      # (traces are still beta), so the defaults are fine.
+    ports:
+      # 5080 is OpenObserve's UI and OTLP-over-HTTP port. Deliberately NOT 4318:
+      # OrbStack squats that, and the resulting failure looks like the collector
+      # is down rather than like a port conflict.
+      - "5080:5080"
+    volumes:
+      - ./data:/data
