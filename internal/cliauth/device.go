@@ -25,11 +25,13 @@ import (
 	"time"
 )
 
-// Config identifies the client and what it is asking for.
+// Config identifies the client and what it is asking for. It is discovered from
+// the control plane rather than configured on the client (see Resolve), and
+// cached with the token it mints.
 type Config struct {
-	Issuer   string // e.g. http://localhost:3001/oidc
-	ClientID string
-	Resource string // the API indicator the token must be minted for
+	Issuer   string `json:"issuer"` // e.g. http://localhost:3001/oidc
+	ClientID string `json:"client_id"`
+	Resource string `json:"audience"` // the API indicator the token must be minted for
 }
 
 func (c Config) enabled() bool { return c.Issuer != "" && c.ClientID != "" }

@@ -320,7 +320,19 @@ WS     /v1/sessions/{sid}/attach         ?mode=control|viewer
 
 GET    /v1/workspaces/{wid}/events       SSE — status transitions
 GET    /v1/tenants/{tid}/usage           derived from OTel
+
+GET    /v1/auth/config                   how to sign in to THIS deployment
 ```
+
+`/v1/auth/config` is unauthenticated by necessity — it is what a client reads
+*before* it has a token — and carries no secret, since the CLI is a public OAuth
+client whose id travels in every device-flow request anyway. It exists so that
+issuer, audience and client id stay **server-side facts**: they describe the
+deployment, not the machine the CLI runs on, and in Phase 3 each tenant
+authenticates against its own identity provider, which only the control plane
+knows. A client configured with them locally cannot be pointed at two control
+planes without two sets of environment variables, and the failure mode is a token
+minted by the wrong identity provider whose only symptom is a 401.
 
 MCP is a thin wrapper over this later — not a parallel implementation.
 
@@ -789,7 +801,7 @@ One workspace, one tenant, IDs hardcoded in config. No auth, no multi-tenancy, n
 - [x] Local CLI — raw mode, WSS, resize, termios restore on exit/panic/SIGTERM, `Ctrl-]` detach, reattach by session id (`cmd/ourcli`). `--create` and the not-found prompt wait for the workspace CRUD API; the non-TTY guard is already in, so the pipeline-hang failure mode cannot appear.
 - [x] **Gateway inference with a per-session loopback broker** (decision #12, §12.4) — not in the original checklist, but it replaced direct-to-Bedrock as the supported path. The supervisor holds the gateway credential and brokers each session through its own loopback port, so no credential enters a session and attribution cannot be forged. Verified from inside a sandbox.
 - [x] **Operator console** (`console/`) — not in the original checklist. TanStack Start SSR over `GET /v1/status`, `GET /v1/workspaces` (both new) and the existing session/preflight endpoints, with the lifecycle verbs wired to buttons. Two things it is careful about: it reports the stored record **and** whether a task is actually holding a tunnel, since a workspace recorded `active` with no task is the state worth seeing; and it keeps §12.3's three preflight states apart. **Loopback-bound in `vite.config.ts`** — with no auth it is exactly as exposed as the control plane. Includes a **read-only** xterm.js viewer per session behind `FF_VIEW_SESSION` (**off by default**, gating the route as well as the button), riding the existing `?mode=viewer` attach path, so the browser gets no capability `ourcli connect -mode viewer` did not already have; driving still means the CLI. Not the §11 web client — that one is the Agent SDK against the same sandbox.
-- [x] **Authentication (partial, opt-in)** — not in the original checklist; Phase 3 owns the rest. Passwordless email sign-in via a local Logto (`auth-stack/`), the console holding the session in an encrypted cookie, `ourcli login` using the **OAuth device flow** (RFC 8628) so each operator gets their own token rather than sharing a static secret, and `internal/auth` validating signature/issuer/audience/expiry on the management API. **Deliberately no scope checks** — there is no user model to check against, so this is authentication only. It does **not** close the owner-scoped attach gap in §2.5: any authenticated caller still reaches any session. Off unless `-auth-issuer` is set, which is what keeps the e2e suite provider-free.
+- [x] **Authentication (partial, opt-in)** — not in the original checklist; Phase 3 owns the rest. Passwordless email sign-in via a local Logto (`auth-stack/`), the console holding the session in an encrypted cookie, `ourcli login` using the **OAuth device flow** (RFC 8628) so each operator gets their own token rather than sharing a static secret, and `internal/auth` validating signature/issuer/audience/expiry on the management API. The CLI is **told nothing about the identity provider**: it discovers issuer, audience and its own client id from `GET /v1/auth/config` on the control plane it was already pointed at, and caches them with the token so no later command pays a round trip (§2.6). **Deliberately no scope checks** — there is no user model to check against, so this is authentication only. It does **not** close the owner-scoped attach gap in §2.5: any authenticated caller still reaches any session. Off unless `-auth-issuer` is set, which is what keeps the e2e suite provider-free.
 - [ ] Terraform module — runner service, both IAM roles, task definition, VPC endpoint, S3 bucket, and **runner token delivery** (Terraform variable → Secrets Manager → task env; document rotation)
 - [x] **Workspace-runtime driver interface, from day one** — `internal/driver` with the `local` (process) and `docker` (real sandbox image) drivers landed. The `ecs` driver is the remaining implementation. This is the mitigation for the biggest standing risk in §13: once the data plane lives in customer accounts we lose the ability to reproduce failures, so our debugging environment must share a code path with the product — the e2e suite runs the real supervisor binary through the real driver for exactly that reason.
 

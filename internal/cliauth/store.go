@@ -14,6 +14,15 @@ type Token struct {
 	AccessToken  string    `json:"access_token"`
 	RefreshToken string    `json:"refresh_token,omitempty"`
 	ExpiresAt    time.Time `json:"expires_at"`
+	// Config is the deployment this token was minted for, stored with it so that
+	// a refresh needs neither environment variables nor a second round trip to
+	// the control plane. Discovery then happens exactly once, at login, instead
+	// of on every command.
+	//
+	// A token file written before this field existed simply cannot refresh: its
+	// ClientID is empty, AccessToken reports "not signed in", and one
+	// `ourcli login` fixes it.
+	Config Config `json:"config"`
 }
 
 func (t *Token) valid() bool {
@@ -84,43 +93,45 @@ func Forget() error {
 	return nil
 }
 
-// AccessToken returns a usable token, refreshing it if it has expired.
+// AccessToken returns a usable token from this machine's cache, refreshing it
+// if it has expired.
 //
-// Returns "" with no error when authentication is not configured, which is what
-// keeps ourcli working against a control plane that has none -- the same opt-in
-// posture as the server side.
-func AccessToken(ctx context.Context, cfg Config) (string, error) {
-	if !cfg.enabled() {
+// Having no token at all is NOT an error here: it returns "" and lets the
+// request go out bare. A control plane with authentication off accepts it, and
+// one that requires it answers 401, which the caller turns into `run ourcli
+// login`. Deciding locally instead would mean guessing at the server's posture
+// -- and guessing wrong means the CLI refusing calls the server would have
+// allowed.
+func AccessToken(ctx context.Context) (string, error) {
+	t, err := Load()
+	if errors.Is(err, ErrNotSignedIn) {
 		return "", nil
 	}
-	t, err := Load()
 	if err != nil {
 		return "", err
 	}
 	if t.valid() {
 		return t.AccessToken, nil
 	}
-	if t.RefreshToken == "" {
-		return "", ErrNotSignedIn
+	// Expired, and beyond saving: no refresh token, or a token file written
+	// before the configuration was stored alongside it. Same answer as having no
+	// token -- go out bare and let the control plane rule on it. Failing here
+	// instead would break a CLI whose control plane wants no token at all,
+	// purely because of a stale file it was never going to send.
+	if t.RefreshToken == "" || !t.Config.enabled() {
+		return "", nil
 	}
-	refreshed, err := Refresh(ctx, cfg, t.RefreshToken)
+	refreshed, err := Refresh(ctx, t.Config, t.RefreshToken)
 	if err != nil {
 		// A refresh token that no longer works means the session is over --
-		// revoked, expired, or the tenant was reset. Say so in the words that
-		// tell the user what to do.
-		return "", ErrNotSignedIn
+		// revoked, expired, or the tenant was reset. Still not a local verdict:
+		// the 401 that follows says `run ourcli login`, which is both the right
+		// advice and the server's own answer rather than our guess at it.
+		return "", nil
 	}
+	refreshed.Config = t.Config
 	if err := Save(refreshed); err != nil {
 		return "", err
 	}
 	return refreshed.AccessToken, nil
-}
-
-// ConfigFromEnv reads the same variables auth-stack/seed.ts generates.
-func ConfigFromEnv() Config {
-	return Config{
-		Issuer:   os.Getenv("LEMUL_AUTH_ISSUER"),
-		ClientID: os.Getenv("LEMUL_CLI_CLIENT_ID"),
-		Resource: os.Getenv("LEMUL_AUTH_AUDIENCE"),
-	}
 }

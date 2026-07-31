@@ -79,6 +79,9 @@ type Options struct {
 	// suite and local runs working without an identity provider (internal/auth).
 	AuthIssuer   string
 	AuthAudience string
+	// AuthCLIClientID is the public device-flow client ourcli signs in as. It is
+	// advertised at GET /v1/auth/config so the CLI never has to be told it.
+	AuthCLIClientID string
 }
 
 type Server struct {
@@ -136,9 +139,12 @@ func (s *Server) Handler() http.Handler {
 	// endpoint negotiation -- and a browser cannot set an Authorization header
 	// on a WebSocket handshake, so requiring a bearer here would make the
 	// console's viewer impossible to build rather than merely inconvenient.
+	// And the auth configuration is the bootstrap a client reads before it has a
+	// token, so protecting it would be circular. It carries no secret.
 	mux.HandleFunc("GET /v1/tunnel/runner", s.handleRunnerTunnel)
 	mux.HandleFunc("GET /v1/tunnel/workspace", s.handleWorkspaceTunnel)
 	mux.HandleFunc("GET /v1/sessions/{sid}/attach", s.handleAttach)
+	mux.HandleFunc("GET /v1/auth/config", s.handleAuthConfig)
 
 	// The management API. Wrapped individually rather than by path prefix so
 	// that adding an endpoint without protecting it is a visible omission at

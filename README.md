@@ -265,9 +265,26 @@ Then the control plane validates bearer tokens on the management API
 checks**, because there is no user model to check against yet):
 
 ```bash
-bin/controlplane -auth-issuer "$LEMUL_AUTH_ISSUER" -auth-audience "$LEMUL_AUTH_AUDIENCE" …
+bin/controlplane -auth-issuer "$LEMUL_AUTH_ISSUER" -auth-audience "$LEMUL_AUTH_AUDIENCE" \
+                 -auth-cli-client-id "$LEMUL_CLI_CLIENT_ID" …
 ourcli login          # OAuth device flow (RFC 8628); approve in a browser
 ```
+
+**The CLI is told nothing.** `ourcli login` reads `GET /v1/auth/config` from the
+control plane at `-server` and learns the issuer, the audience and its own client
+id from there, then caches them with the token so no later command pays a round
+trip. Those are properties of the deployment, not of a laptop: a client that has
+to be handed them cannot be pointed at two control planes without two sets of
+environment variables, and nothing catches the mismatch — the token gets minted
+by the wrong identity provider and the only symptom is a 401. Phase 3 sharpens
+it, since each tenant authenticates against its own identity provider.
+
+The endpoint is unauthenticated by necessity — it is what a client reads *before*
+it has a token — and carries no secret: `ourcli` is a public OAuth client, so its
+client id already travels in every device-flow request. `LEMUL_AUTH_ISSUER`,
+`LEMUL_CLI_CLIENT_ID` and `LEMUL_AUTH_AUDIENCE` still override discovery, all
+three or none; a partial set is refused rather than merged, because the hybrid
+fails much later at token exchange with an error that points at neither half.
 
 Two endpoints stay unauthenticated on purpose: `/v1/tunnel/*`, where the runner
 and workspace tasks present their own credentials and have no user to be, and

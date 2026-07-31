@@ -23,7 +23,7 @@ func request(method, url string, body io.Reader) (*http.Response, error) {
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	token, err := cliauth.AccessToken(context.Background(), cliauth.ConfigFromEnv())
+	token, err := cliauth.AccessToken(context.Background())
 	if err != nil {
 		return nil, err
 	}
@@ -37,30 +37,35 @@ func request(method, url string, body io.Reader) (*http.Response, error) {
 	// Turn the protocol-level answer into the sentence the user needs. A bare
 	// "401 Unauthorized" from a CLI leaves them guessing whether the server is
 	// broken or they simply have not signed in.
+	//
+	// One sentence covers every case now: whether this deployment needs a token,
+	// and which identity provider mints it, are things `ourcli login` asks the
+	// control plane rather than things the user has to know.
 	if resp.StatusCode == http.StatusUnauthorized {
 		_ = resp.Body.Close()
-		if cliauth.ConfigFromEnv().ClientID == "" {
-			return nil, fmt.Errorf(
-				"the control plane requires authentication, but this client has none configured.\n" +
-					"Set LEMUL_AUTH_ISSUER, LEMUL_CLI_CLIENT_ID and LEMUL_AUTH_AUDIENCE " +
-					"(auth-stack/seed.ts generates them), then run `ourcli login`")
-		}
 		return nil, fmt.Errorf("unauthorized: run `ourcli login`")
 	}
 	return resp, nil
 }
 
 // runLogin performs the device authorization grant (RFC 8628).
+//
+// It asks the control plane at -server how to sign in before doing so, so the
+// only thing a user supplies is the address they were already going to use.
 func runLogin() error {
-	cfg := cliauth.ConfigFromEnv()
-	if cfg.ClientID == "" {
-		return fmt.Errorf(
-			"authentication is not configured.\n" +
-				"Generate it with: bun auth-stack/seed.ts > auth-stack/.env.generated\n" +
-				"then export LEMUL_AUTH_ISSUER, LEMUL_CLI_CLIENT_ID and LEMUL_AUTH_AUDIENCE")
+	ctx := context.Background()
+	cfg, required, err := cliauth.Resolve(ctx, *server)
+	if err != nil {
+		return err
+	}
+	if !required {
+		// Not an error. Signing in to a control plane that wants no token is a
+		// no-op, and saying so is more useful than inventing a failure.
+		fmt.Fprintf(os.Stderr, "%s does not require authentication — nothing to sign in to.\n", *server)
+		return nil
 	}
 
-	token, err := cliauth.Authorize(context.Background(), cfg, func(p cliauth.Prompt) {
+	token, err := cliauth.Authorize(ctx, cfg, func(p cliauth.Prompt) {
 		target := p.Complete
 		if target == "" {
 			target = p.VerificationURI
@@ -76,6 +81,10 @@ func runLogin() error {
 	if err != nil {
 		return err
 	}
+	// Stored with the token: it is what a later refresh needs, and keeping it
+	// here is what lets every other command run without asking the control plane
+	// anything before it asks for the thing it actually wanted.
+	token.Config = cfg
 	if err := cliauth.Save(token); err != nil {
 		return err
 	}
@@ -95,18 +104,16 @@ func runLogout() error {
 	return nil
 }
 
-// authStatus is used by `ourcli whoami`.
+// authStatus is used by `ourcli whoami`. It reports what this machine holds,
+// deliberately without calling the control plane: "am I signed in" should still
+// answer when the control plane is unreachable.
 func authStatus() string {
-	cfg := cliauth.ConfigFromEnv()
-	if cfg.ClientID == "" {
-		return "authentication is not configured (the control plane may not require it)"
-	}
 	t, err := cliauth.Load()
 	if err != nil {
 		return "not signed in — run `ourcli login`"
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "issuer:  %s\n", cfg.Issuer)
+	fmt.Fprintf(&b, "issuer:  %s\n", t.Config.Issuer)
 	fmt.Fprintf(&b, "expires: %s", t.ExpiresAt.Local().Format("2006-01-02 15:04:05"))
 	if t.RefreshToken != "" {
 		b.WriteString("  (auto-refreshes)")

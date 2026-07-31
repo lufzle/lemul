@@ -44,6 +44,11 @@ func main() {
 			"OIDC issuer for management API tokens (empty disables authentication)")
 		authAudience = flag.String("auth-audience", os.Getenv("LEMUL_AUTH_AUDIENCE"),
 			"API resource indicator tokens must be minted for")
+		// Advertised at GET /v1/auth/config so that `ourcli login` can discover
+		// how to sign in from the address it was already given, instead of the
+		// user exporting deployment facts into their shell.
+		authCLIClientID = flag.String("auth-cli-client-id", os.Getenv("LEMUL_CLI_CLIENT_ID"),
+			"public device-flow client id advertised to ourcli")
 	)
 	flag.Parse()
 	log.SetPrefix("controlplane: ")
@@ -78,12 +83,19 @@ func main() {
 		Pins:             *pins,
 		AuthIssuer:       *authIssuer,
 		AuthAudience:     *authAudience,
+		AuthCLIClientID:  *authCLIClientID,
 	})
 	if err != nil {
 		log.Fatalf("control plane: %v", err)
 	}
 	if *authIssuer != "" {
 		log.Printf("management API requires a bearer token from %s (audience %s)", *authIssuer, *authAudience)
+		// Said at boot rather than left for the first operator to hit, because
+		// the symptom is `ourcli login` failing on a control plane that looks
+		// correctly configured from every other angle.
+		if *authCLIClientID == "" {
+			log.Printf("WARNING: no -auth-cli-client-id, so `ourcli login` cannot discover how to sign in")
+		}
 	} else {
 		log.Printf("management API is UNAUTHENTICATED (no -auth-issuer configured)")
 	}

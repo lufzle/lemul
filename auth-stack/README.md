@@ -64,10 +64,20 @@ nothing to switch off for that.
 ```bash
 set -a; . auth-stack/.env.generated; set +a
 
-bin/controlplane -auth-issuer "$LEMUL_AUTH_ISSUER" -auth-audience "$LEMUL_AUTH_AUDIENCE" …
+bin/controlplane …               # picks up all three LEMUL_* as flag defaults
 cd console && bun run dev        # reads LOGTO_* from the same file
-ourcli login                     # device flow; approve in a browser
 ```
+
+Only the **server** side reads this file. `ourcli` needs nothing exported:
+
+```bash
+ourcli login                     # asks the control plane, then device flow
+```
+
+It fetches `GET /v1/auth/config` from whatever `-server` points at and learns the
+issuer, the audience and its own client id from there. The three `LEMUL_*`
+variables still override it, all three or none, which is for pointing the CLI at
+an identity provider the control plane does not know about — not for normal use.
 
 Leave `-auth-issuer` unset and everything behaves as it did before there was any
 authentication — which is what keeps `go test ./... -race` and a bare local run
