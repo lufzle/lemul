@@ -29,13 +29,35 @@ Measured 2026-07-30, Claude Code **2.1.220**, `ghcr.io/berriai/litellm:main-stab
 > per-call floor is ~35–41 k tokens, so losing the cache would be expensive
 > rather than cosmetic.
 >
-> **Two things that are still broken**, both orthogonal to the wire format:
-> `spend` is `0.0` on every call because LiteLLM has no price map entry for
-> either model id — the gateway is the cost source of record (§12.4), and it is
-> currently recording free inference. And LiteLLM's spend log leaves
-> `prompt_tokens_details.cache_write_tokens` **unset** on the anthropic-provider
-> path where it populated it on the `openrouter/` path; the response body is
-> right, the log is not, so do not read cache behaviour out of `/spend/logs`.
+> **Cost needs explicit pricing, and the reason is not the obvious one.**
+> LiteLLM *does* read a cost from OpenRouter — but only on the `openrouter/`
+> provider path (`llms/openrouter/chat/transformation.py`), and what it reads is
+> `usage.cost`. **This account is BYOK**, so OpenRouter charges nothing and
+> `usage.cost` is `0` *by definition*; the real figure arrives as
+> `usage.cost_details.upstream_inference_cost`, which LiteLLM 1.94.0 has no
+> reference to anywhere. Both paths therefore recorded `0.0` — the `openrouter/`
+> one faithfully, the `anthropic/` one for want of a price map.
+>
+> Fixed with `model_info` rates per model, **including the cache tiers**, which
+> are load-bearing rather than garnish: one measured Claude Code turn was 34,455
+> cache-write tokens out of 34,650. Verified against
+> `upstream_inference_cost` on all three models and both cache tiers — exact
+> agreement to eight significant figures, including a 12× difference between a
+> cache-write call and a cache-read call of the same prompt.
+>
+> These rates are a **model** of the cost, not the invoice, so reconcile them
+> against `upstream_inference_cost` periodically. That is §12.4's
+> two-independent-signals argument doing real work.
+>
+> **Two log fields that lie, and one of them cost me a wrong conclusion.** The
+> `x-litellm-response-cost` **response header** prices only the non-cached
+> tokens — it read `2.8e-05` where the true cost was `0.00553`, a 200× understatement
+> — because it is computed before cache usage is known. The `/spend/logs` entry
+> is correct. Read cost from the log, never the header. Separately, that same log
+> leaves `prompt_tokens_details.cache_write_tokens` **unset** on the
+> anthropic-provider path though the cost calculator plainly sees those tokens,
+> so do not infer cache behaviour from it either; the response body is the
+> authority.
 
 ## What was being tested
 

@@ -41,24 +41,62 @@
 # .../api/v1 produces .../api/v1/v1/messages, which OpenRouter answers with the
 # HTML of its marketing site -- an error that reads like anything but a doubled
 # path segment.
+# model_info exists because NOTHING ELSE PRODUCES A COST HERE, and the reason is
+# worth knowing before someone deletes it as redundant.
+#
+# LiteLLM does read a cost from OpenRouter, but only on the `openrouter/`
+# provider path (llms/openrouter/chat/transformation.py), and what it reads is
+# `usage.cost`. This account is BYOK -- inference is billed to its own Anthropic
+# key -- so OpenRouter charges nothing and `usage.cost` is 0 by definition. The
+# real figure arrives as `usage.cost_details.upstream_inference_cost`, which
+# LiteLLM 1.94.0 does not know about at all. So both paths record 0.0: the
+# `openrouter/` one faithfully, the `anthropic/` one for want of a price map.
+#
+# These rates are therefore a MODEL of the cost rather than the invoice, and
+# they drift if OpenRouter reprices. Reconcile against upstream_inference_cost
+# in the response body, which is §12.4's two-independent-signals argument doing
+# real work rather than being a slogan.
+#
+# The cache tiers are not optional garnish. A single measured Claude Code turn
+# was 34,455 cache-write tokens out of 34,650, so pricing every input token at
+# the prompt rate would overstate the bill by roughly the cache-write premium on
+# nearly the whole prompt. Rates from OpenRouter's /api/v1/models, per token.
 model_list:
   - model_name: claude-opus-4-8
     litellm_params:
       model: anthropic/anthropic/claude-opus-4.8
       api_base: https://openrouter.ai/api
       api_key: os.environ/OPENROUTER_API_KEY
+    model_info:
+      input_cost_per_token: 0.000005
+      output_cost_per_token: 0.000025
+      cache_read_input_token_cost: 0.0000005
+      cache_creation_input_token_cost: 0.00000625
+      cache_creation_input_token_cost_above_1hr: 0.00001
 
   - model_name: claude-sonnet-4-6
     litellm_params:
       model: anthropic/anthropic/claude-sonnet-4.6
       api_base: https://openrouter.ai/api
       api_key: os.environ/OPENROUTER_API_KEY
+    model_info:
+      input_cost_per_token: 0.000003
+      output_cost_per_token: 0.000015
+      cache_read_input_token_cost: 0.0000003
+      cache_creation_input_token_cost: 0.00000375
+      cache_creation_input_token_cost_above_1hr: 0.000006
 
   - model_name: claude-haiku-4-5
     litellm_params:
       model: anthropic/anthropic/claude-haiku-4.5
       api_base: https://openrouter.ai/api
       api_key: os.environ/OPENROUTER_API_KEY
+    model_info:
+      input_cost_per_token: 0.000001
+      output_cost_per_token: 0.000005
+      cache_read_input_token_cost: 0.0000001
+      cache_creation_input_token_cost: 0.00000125
+      cache_creation_input_token_cost_above_1hr: 0.000002
 
 litellm_settings:
   # Spend tracking is the point of decision #12: we want per-workspace and
