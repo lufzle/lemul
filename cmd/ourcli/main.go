@@ -155,6 +155,17 @@ func run(workspace string) error {
 	switch {
 	case sid != "":
 		// Explicit intent: join this session even if someone is already on it.
+		//
+		// Resolved through the same prefix matching stop/resume/rm use. Without
+		// it `connect` is the one command that demands all 36 characters -- while
+		// being the command the detach message tells you to type, and the one the
+		// usage text promises accepts a prefix. A prefix went straight to the API
+		// as an id and came back "404 no such session" for a session that was
+		// plainly running.
+		var err error
+		if sid, err = resolveSession(workspace, sid); err != nil {
+			return err
+		}
 	case *forceNew:
 		var err error
 		if sid, err = createSession(workspace); err != nil {

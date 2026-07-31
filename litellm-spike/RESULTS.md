@@ -9,6 +9,33 @@ Measured 2026-07-30, Claude Code **2.1.220**, `ghcr.io/berriai/litellm:main-stab
 > `claude-sonnet-4.6`, `claude-haiku-4.5`). The findings are about the gateway
 > hop and still hold, but read the Bedrock model IDs here as history rather than
 > as current configuration.
+>
+> **Use OpenRouter's native Anthropic wire, not the `openrouter/` provider.**
+> OpenRouter serves `POST /api/v1/messages` in Anthropic format, so LiteLLM's
+> `anthropic/` provider can call it directly. The `openrouter/` provider instead
+> converts Anthropic → OpenAI → Anthropic for a request that started and ended
+> in Anthropic format. Measured difference in the response: the native path
+> returns `cache_creation_input_tokens`, `cache_read_input_tokens`, the
+> `cache_creation.ephemeral_5m/1h` split, `thinking_tokens` and `service_tier`;
+> the translated path returns none of them. Attribution tags survive on both.
+>
+> `api_base` takes **no `/v1`** — LiteLLM appends `/v1/messages` itself, and
+> `.../api/v1` yields `.../api/v1/v1/messages`, which OpenRouter answers with the
+> HTML of its marketing site.
+>
+> **Prompt caching works on the native wire, reads included** — measured with a
+> 4401-token cached system prefix: first call `cache_creation_input_tokens=4401`,
+> second `cache_read_input_tokens=4401`. This matters because Claude Code's
+> per-call floor is ~35–41 k tokens, so losing the cache would be expensive
+> rather than cosmetic.
+>
+> **Two things that are still broken**, both orthogonal to the wire format:
+> `spend` is `0.0` on every call because LiteLLM has no price map entry for
+> either model id — the gateway is the cost source of record (§12.4), and it is
+> currently recording free inference. And LiteLLM's spend log leaves
+> `prompt_tokens_details.cache_write_tokens` **unset** on the anthropic-provider
+> path where it populated it on the `openrouter/` path; the response body is
+> right, the log is not, so do not read cache behaviour out of `/spend/logs`.
 
 ## What was being tested
 

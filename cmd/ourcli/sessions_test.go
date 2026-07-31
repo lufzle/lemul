@@ -147,3 +147,78 @@ func TestListSessionsReportsHTTPErrors(t *testing.T) {
 		t.Errorf("err = %v, want an HTTP 500", err)
 	}
 }
+
+// Session ids are 36-character UUIDs (§12.7), so a prefix is the difference
+// between retyping an id and not. `connect` skipped this resolution entirely
+// and passed whatever was typed to the API as an id, which answered "404 no
+// such session" for a session that was plainly running -- while the usage text
+// promised prefixes work and the detach message tells you to type one.
+func TestResolveSessionAcceptsAUniquePrefix(t *testing.T) {
+	fakeControlPlane(t, `{"sessions":[
+		{"id":"522f6d19-b559-477f-88ae-f53322baeca3","status":"running","attachers":0},
+		{"id":"05ccae56-b83b-4a6f-ad66-469465258e4c","status":"stopped","attachers":0}
+	]}`)
+
+	got, err := resolveSession("w1", "522f6d19")
+	if err != nil {
+		t.Fatalf("resolveSession: %v", err)
+	}
+	if got != "522f6d19-b559-477f-88ae-f53322baeca3" {
+		t.Errorf("got %q", got)
+	}
+}
+
+// Picking one would at best waste the user's time and at worst stop the wrong
+// agent run, so ambiguity is an error that names the candidates.
+func TestResolveSessionRefusesAnAmbiguousPrefix(t *testing.T) {
+	fakeControlPlane(t, `{"sessions":[
+		{"id":"aa11-one","status":"running","attachers":0},
+		{"id":"aa11-two","status":"running","attachers":0}
+	]}`)
+
+	_, err := resolveSession("w1", "aa11")
+	if err == nil {
+		t.Fatal("no error for a prefix matching two sessions")
+	}
+	for _, want := range []string{"aa11-one", "aa11-two"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error does not name %q: %v", want, err)
+		}
+	}
+}
+
+// An id that is also a prefix of a longer one must resolve to itself rather
+// than becoming ambiguous.
+func TestResolveSessionPrefersAnExactMatch(t *testing.T) {
+	fakeControlPlane(t, `{"sessions":[
+		{"id":"abc","status":"running","attachers":0},
+		{"id":"abcdef","status":"running","attachers":0}
+	]}`)
+
+	got, err := resolveSession("w1", "abc")
+	if err != nil {
+		t.Fatalf("resolveSession: %v", err)
+	}
+	if got != "abc" {
+		t.Errorf("got %q, want the exact match", got)
+	}
+}
+
+func TestResolveSessionReportsNoMatch(t *testing.T) {
+	fakeControlPlane(t, `{"sessions":[{"id":"s-1","status":"running","attachers":0}]}`)
+
+	if _, err := resolveSession("w1", "nope"); err == nil {
+		t.Fatal("no error for a prefix matching nothing")
+	}
+}
+
+// A control plane that cannot list must not block an operator who already has
+// the full id in hand.
+func TestResolveSessionFallsBackWhenListingFails(t *testing.T) {
+	fakeControlPlane(t, "")
+
+	got, err := resolveSession("w1", "s-verbatim")
+	if err != nil || got != "s-verbatim" {
+		t.Errorf("got (%q, %v), want (s-verbatim, nil)", got, err)
+	}
+}

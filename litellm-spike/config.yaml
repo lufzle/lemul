@@ -20,20 +20,44 @@
 # (claude-sonnet-4.6 vs claude-sonnet-4-6), and the opus tier here is 4.8, not
 # the 5 the Bedrock configuration pinned -- so a stale -pins flag asks for a
 # model this gateway does not serve, and the session dies on its first prompt.
+# The `anthropic/` provider prefix, not `openrouter/`, is deliberate and it is
+# the difference between one wire format and three.
+#
+# Claude Code speaks the Anthropic Messages API. With `openrouter/`, LiteLLM
+# converts that to OpenAI chat-completions, calls OpenRouter's OpenAI-compatible
+# endpoint, and converts the answer back -- so every Anthropic-shaped concept has
+# to survive a round trip through a format that has no word for it. OpenRouter
+# also serves a NATIVE Anthropic endpoint at /api/v1/messages, so the round trip
+# buys nothing. Measured difference in the response: the native path returns
+# cache_creation_input_tokens, cache_read_input_tokens, the
+# cache_creation.ephemeral_5m/1h split, thinking_tokens and service_tier; the
+# translated path returns none of them.
+#
+# Two spellings of the same thing, which is why it reads oddly. `anthropic/` is
+# LiteLLM's provider selector and is stripped before the call; the second
+# `anthropic/` is OpenRouter's own namespace and is what goes on the wire.
+#
+# api_base has NO /v1: LiteLLM appends /v1/messages itself, and giving it
+# .../api/v1 produces .../api/v1/v1/messages, which OpenRouter answers with the
+# HTML of its marketing site -- an error that reads like anything but a doubled
+# path segment.
 model_list:
   - model_name: claude-opus-4-8
     litellm_params:
-      model: openrouter/anthropic/claude-opus-4.8
+      model: anthropic/anthropic/claude-opus-4.8
+      api_base: https://openrouter.ai/api
       api_key: os.environ/OPENROUTER_API_KEY
 
   - model_name: claude-sonnet-4-6
     litellm_params:
-      model: openrouter/anthropic/claude-sonnet-4.6
+      model: anthropic/anthropic/claude-sonnet-4.6
+      api_base: https://openrouter.ai/api
       api_key: os.environ/OPENROUTER_API_KEY
 
   - model_name: claude-haiku-4-5
     litellm_params:
-      model: openrouter/anthropic/claude-haiku-4.5
+      model: anthropic/anthropic/claude-haiku-4.5
+      api_base: https://openrouter.ai/api
       api_key: os.environ/OPENROUTER_API_KEY
 
 litellm_settings:
