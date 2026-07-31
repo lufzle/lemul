@@ -330,5 +330,17 @@ func (s *Session) Stop(force bool) error {
 	return s.cmd.Process.Signal(sig)
 }
 
+// Pid is the session's own process, and 0 once it has exited or before it
+// starts. Exported so the supervisor can attribute processes found in /proc back
+// to the session that spawned them: everything a session does -- Bash tools, MCP
+// servers, a dev server it left running -- descends from this pid, and parentage
+// is the only link between an OS process and a conversation.
+func (s *Session) Pid() int {
+	if s.cmd == nil || s.cmd.Process == nil {
+		return 0
+	}
+	return s.cmd.Process.Pid
+}
+
 // Wait blocks until the child has exited and attachers have been closed.
 func (s *Session) Wait() { <-s.done }

@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -64,6 +65,12 @@ type Options struct {
 	Region string
 	// Pins to check; empty uses bedrock.DefaultPins.
 	Pins []bedrock.Pin
+
+	// WorkspaceRoot is what the explorer may list, and the boundary it may not
+	// cross. Empty defaults to the image's /workspace. It is a jail rather than
+	// a convenience: this process runs as root, so nothing below it enforces
+	// containment (fsjail.go).
+	WorkspaceRoot string
 }
 
 // Supervisor implements agent.Handler.
@@ -78,6 +85,10 @@ type Supervisor struct {
 	preflight     tunnel.PreflightReport
 
 	broker *gateway.Broker
+
+	samples  *sampler
+	stopOnce sync.Once
+	stopped  chan struct{}
 }
 
 func New(o Options) *Supervisor {
@@ -90,7 +101,15 @@ func New(o Options) *Supervisor {
 	if o.HeadroomInterval <= 0 {
 		o.HeadroomInterval = 30 * time.Second
 	}
-	s := &Supervisor{opt: o}
+	if o.WorkspaceRoot == "" {
+		o.WorkspaceRoot = defaultWorkspaceRoot()
+	}
+	s := &Supervisor{opt: o, stopped: make(chan struct{})}
+	// Sampling starts with the process, not with the first request: CPU and
+	// network are rates, so the first caller would otherwise get a zero and a
+	// wrong one at that.
+	s.samples = newSampler(o.WorkspaceRoot)
+	go s.samples.run(s.stopped)
 	if o.GatewayURL != "" {
 		b, err := gateway.New(gateway.Options{
 			Upstream:    o.GatewayURL,
@@ -232,6 +251,12 @@ func (s *Supervisor) OnStream(stream net.Conn) {
 		s.handleDeleteSession(stream, env)
 	case tunnel.MsgListSessions:
 		s.handleListSessions(stream)
+	case tunnel.MsgListDir:
+		s.handleListDir(stream, env)
+	case tunnel.MsgListProcesses:
+		s.handleListProcesses(stream)
+	case tunnel.MsgResources:
+		s.handleResources(stream)
 	default:
 		replyError(stream, "unknown message type "+env.Type)
 		_ = stream.Close()
@@ -484,6 +509,99 @@ func (s *Supervisor) handleAttach(stream net.Conn, env tunnel.Envelope) {
 
 func replyError(stream net.Conn, msg string) {
 	_ = tunnel.WriteMsg(stream, tunnel.MsgError, tunnel.Error{Message: msg})
+}
+
+// maxDirEntries caps one listing. The tunnel refuses a frame over 1 MiB
+// (tunnel/frame.go) and shares the connection with live PTY traffic, so an
+// unbounded listing would not merely be slow -- it would fail, and take the
+// terminal's responsiveness with it on the way.
+const maxDirEntries = 1000
+
+func (s *Supervisor) handleListDir(stream net.Conn, env tunnel.Envelope) {
+	defer func() { _ = stream.Close() }()
+	var req tunnel.ListDir
+	if err := env.Decode(&req); err != nil {
+		replyError(stream, "bad list_dir request: "+err.Error())
+		return
+	}
+
+	abs, err := resolveInRoot(s.opt.WorkspaceRoot, req.Path)
+	if err != nil {
+		replyError(stream, err.Error())
+		return
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		replyError(stream, err.Error())
+		return
+	}
+	if !info.IsDir() {
+		replyError(stream, errNotADir.Error())
+		return
+	}
+
+	entries, err := os.ReadDir(abs)
+	if err != nil {
+		replyError(stream, err.Error())
+		return
+	}
+
+	limit := req.Limit
+	if limit <= 0 || limit > maxDirEntries {
+		limit = maxDirEntries
+	}
+	out := tunnel.DirListing{Path: displayPath(s.opt.WorkspaceRoot, abs), Total: len(entries)}
+	for i := req.Offset; i < len(entries) && len(out.Entries) < limit; i++ {
+		e := entries[i]
+		// Lstat, not Stat: a symlink should report itself rather than its
+		// target, and a dangling one must not drop the whole listing.
+		fi, err := os.Lstat(filepath.Join(abs, e.Name()))
+		if err != nil {
+			continue
+		}
+		out.Entries = append(out.Entries, tunnel.DirEntry{
+			Name:      e.Name(),
+			IsDir:     fi.IsDir(),
+			Size:      fi.Size(),
+			Mode:      fi.Mode().Perm().String(),
+			ModTime:   fi.ModTime().UTC().Format(time.RFC3339),
+			IsSymlink: fi.Mode()&os.ModeSymlink != 0,
+		})
+	}
+	out.Truncated = req.Offset+len(out.Entries) < out.Total
+	_ = tunnel.WriteMsg(stream, tunnel.MsgOK, out)
+}
+
+func (s *Supervisor) handleListProcesses(stream net.Conn) {
+	defer func() { _ = stream.Close() }()
+
+	pids := make(map[string]int)
+	for _, sess := range s.mgr.List() {
+		if pid := sess.Pid(); pid > 0 {
+			pids[sess.ID] = pid
+		}
+	}
+	procs, ok := readProcesses(pids)
+
+	out := tunnel.ProcessList{Available: ok}
+	for _, p := range procs {
+		out.Processes = append(out.Processes, tunnel.ProcessInfo(p))
+	}
+	_ = tunnel.WriteMsg(stream, tunnel.MsgOK, out)
+}
+
+func (s *Supervisor) handleResources(stream net.Conn) {
+	defer func() { _ = stream.Close() }()
+	_ = tunnel.WriteMsg(stream, tunnel.MsgOK, s.samples.usage())
+}
+
+// defaultWorkspaceRoot matches image/entrypoint.sh, which honours
+// LEMUL_PROJECT_DIR and otherwise uses /workspace.
+func defaultWorkspaceRoot() string {
+	if v := os.Getenv("LEMUL_PROJECT_DIR"); v != "" {
+		return v
+	}
+	return "/workspace"
 }
 
 // sessionEnv builds the environment for one session's Claude Code process.

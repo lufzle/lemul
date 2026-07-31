@@ -33,6 +33,12 @@ func main() {
 		ringBytes    = flag.Int("ring", 256<<10, "per-session replay ring size in bytes")
 		nudgeDelay   = flag.Duration("nudge-delay", 75*time.Millisecond, "gap between the two resize ioctls on attach")
 		headroomEvry = flag.Duration("headroom-interval", 30*time.Second, "resource headroom reporting interval")
+		// The explorer's boundary, not a convenience: this process runs as root,
+		// so nothing under it enforces containment (internal/supervisor/fsjail.go).
+		// Same variable image/entrypoint.sh uses, so the container and a
+		// hand-run supervisor agree on what "the workspace" means.
+		workspaceRoot = flag.String("workspace-root", os.Getenv("LEMUL_PROJECT_DIR"),
+			"directory the workspace explorer may list; empty uses /workspace")
 		// Defaulted from the environment because that is how a task is configured
 		// in both drivers: the local driver passes env to the child, and ECS
 		// passes it through the task definition. Flags stay for running the
@@ -79,6 +85,7 @@ func main() {
 		BedrockPreflight: *bedrockPre,
 		Region:           *region,
 		Pins:             pins,
+		WorkspaceRoot:    *workspaceRoot,
 	})
 
 	if err := s.Run(ctx); err != nil && ctx.Err() == nil {

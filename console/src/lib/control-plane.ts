@@ -222,3 +222,93 @@ export const deleteSession = createServerFn({ method: 'POST' })
     )
     return { ok: true }
   })
+
+/* ----------------------------------------------------------------------------
+ * Workspace explorer (§13's data-plane observability gap).
+ *
+ * All reads. There is no write counterpart on the supervisor to call, which is
+ * a stronger guarantee than a client that declines to offer one.
+ *
+ * Note what is absent: file CONTENTS. Listings carry names and sizes; bodies
+ * would put customer source code through our relay in cleartext, which is the
+ * claim §2.7 exists to make good on. That is an E2E decision, not a feature
+ * toggle.
+ * ------------------------------------------------------------------------- */
+
+export type DirEntry = {
+  name: string
+  is_dir: boolean
+  size: number
+  mode: string
+  mod_time: string
+  is_symlink?: boolean
+}
+
+export type DirListing = {
+  path: string
+  entries: Array<DirEntry>
+  total: number
+  truncated: boolean
+}
+
+const widPath = (d: unknown) => {
+  if (typeof d !== 'object' || d === null || typeof (d as any).wid !== 'string') {
+    throw new Error('wid is required')
+  }
+  const v = d as { wid: string; path?: string }
+  return { wid: v.wid, path: typeof v.path === 'string' ? v.path : '/' }
+}
+
+export const listDir = createServerFn({ method: 'GET' })
+  .validator(widPath)
+  .handler(async ({ data }) =>
+    api<DirListing>(
+      `/v1/workspaces/${encodeURIComponent(data.wid)}/fs?path=${encodeURIComponent(data.path)}`,
+    ),
+  )
+
+export type ProcessInfo = {
+  pid: number
+  ppid: number
+  name: string
+  state: string
+  rss_kb: number
+  cpu_secs: number
+  started_at?: string
+  cmdline?: string
+  session_id?: string
+}
+
+export type ProcessList = { processes: Array<ProcessInfo>; available: boolean }
+
+export const listProcesses = createServerFn({ method: 'GET' })
+  .validator(wid)
+  .handler(async ({ data }) =>
+    api<ProcessList>(`/v1/workspaces/${encodeURIComponent(data.wid)}/processes`),
+  )
+
+/**
+ * Every group carries its own `available`. A zero where cgroups cannot be read
+ * -- the local driver on darwin -- means "we could not look", not "nothing is
+ * being used", and the panel has to be able to say which.
+ */
+export type ResourceUsage = {
+  cpu: { available: boolean; cores: number; limit: number; history?: Array<number> }
+  memory: { available: boolean; used_mb: number; limit_mb: number; history?: Array<number> }
+  disk: { available: boolean; used_mb: number; total_mb: number; path?: string }
+  network: {
+    available: boolean
+    rx_bytes_per_sec: number
+    tx_bytes_per_sec: number
+    rx_total: number
+    tx_total: number
+    history?: Array<number>
+  }
+  sampled_at?: string
+}
+
+export const getResources = createServerFn({ method: 'GET' })
+  .validator(wid)
+  .handler(async ({ data }) =>
+    api<ResourceUsage>(`/v1/workspaces/${encodeURIComponent(data.wid)}/resources`),
+  )

@@ -137,3 +137,44 @@ against the same sandbox, and a different product surface.
   currently sets aside (`CheckOrigin` accepts every origin) to be answered first.
 - **No workspace create/delete.** Workspaces are still created on demand by their
   first session; the CRUD API is not built yet.
+
+## The workspace explorer — off by default
+
+Behind `FF_WORKSPACE_EXPLORER`, which also **ships dark**:
+
+```bash
+FF_WORKSPACE_EXPLORER=1 bun run dev
+```
+
+Three read-only panels per workspace: directory listings, running processes
+attributed to the session that spawned them, and CPU / memory / disk / network
+with two minutes of history. It exists for §13's largest standing risk — losing
+observability into the data plane — because until now the only way to see inside
+a task was to attach to a session and type, which means co-driving somebody's
+live Claude Code.
+
+Gates the route as well as the link, for the same reason the viewer does.
+
+**Why it ships dark is authorisation, not maturity.** §2.5's owner-scoped attach
+is still outstanding, so any authenticated operator reaches every workspace —
+and where attaching is visible and means co-driving, this reads file paths and
+command lines silently. Loopback plus the flag is the bound until §2.5 lands.
+
+**No file contents, deliberately.** Listings carry names, sizes, modes and
+mtimes. File bodies would put customer source code in cleartext through our
+relay, which is exactly the claim §2.7 exists to make good on — and structured
+and addressable, they would be a better target than the PTY stream ever was.
+Adding them is an E2E decision, not a feature toggle.
+
+Two things the panels are careful about:
+
+- **`available: false` is rendered as "unknown", never as a zero.** There are no
+  cgroups on darwin, where the `local` driver runs, and a confident `0%` there
+  would be the console stating something false rather than admitting it could
+  not look. A container with no `--memory` shows usage and `no quota` — a
+  missing limit is not a limit of zero.
+- **Command lines are redacted for known credential flags.** The supervisor's
+  own argv carries `-token`, the workspace tunnel credential, and it rendered in
+  full the first time this panel met a real task. Environments are never read at
+  all (`/proc/<pid>/environ` holds the gateway key), and argv needed the same
+  treatment to make that exclusion mean anything.

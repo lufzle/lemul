@@ -333,7 +333,17 @@ It is served by its own process, not the Go binary. Backing endpoints:
 GET /v1/status                     runner count and what this control plane does
 GET /v1/workspaces                 records, plus whether a task is really connected
 GET /v1/workspaces/{wid}
+GET /v1/workspaces/{wid}/fs        directory listing (metadata only, never contents)
+GET /v1/workspaces/{wid}/processes what is running, attributed to sessions
+GET /v1/workspaces/{wid}/resources CPU / memory / disk / network, with history
 ```
+
+The last three back the **workspace explorer**, behind `FF_WORKSPACE_EXPLORER`
+(off by default). They are reads that never place a task, and there is no write
+counterpart on the supervisor to call — read-only is structural rather than
+enforced. The path jail lives in the supervisor (`internal/supervisor/fsjail.go`)
+because that process runs as root: `/proc/self/environ` there holds the gateway
+key, so containment is policy and this is the only copy of it.
 
 ## Not yet built
 

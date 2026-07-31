@@ -18,6 +18,19 @@ export type Flags = {
    * ships dark and gets turned on deliberately.
    */
   viewSession: boolean
+
+  /**
+   * The workspace explorer (`FF_WORKSPACE_EXPLORER`): directory listings,
+   * running processes and resource usage for a workspace task.
+   *
+   * Off unless explicitly enabled, for an authorisation reason rather than a
+   * maturity one. §2.5's owner-scoped attach is still outstanding, so any
+   * authenticated operator reaches every workspace -- and where attaching to
+   * someone's session is visible and means co-driving it, the explorer reads
+   * their file paths and command lines silently. Loopback binding plus this
+   * flag is what bounds that until §2.5 lands.
+   */
+  explorer: boolean
 }
 
 function on(v: string | undefined): boolean {
@@ -29,5 +42,6 @@ function on(v: string | undefined): boolean {
 export const getFlags = createServerFn({ method: 'GET' }).handler(
   async (): Promise<Flags> => ({
     viewSession: on(process.env.FF_VIEW_SESSION),
+    explorer: on(process.env.FF_WORKSPACE_EXPLORER),
   }),
 )

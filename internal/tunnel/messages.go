@@ -22,6 +22,12 @@ const (
 	MsgStopSession   = "stop_session"  // command stream
 	MsgDeleteSession = "delete_session"
 	MsgListSessions  = "list_sessions"
+	// Workspace introspection for the operator console. All three are READS and
+	// there is deliberately no write counterpart -- read-only is structural here
+	// rather than enforced, which is the strongest form it can take.
+	MsgListDir       = "list_dir"
+	MsgListProcesses = "list_processes"
+	MsgResources     = "resources"
 	// MsgResize travels on an established attach stream, not a command stream.
 	// Terminal size cannot ride in the byte stream, so it needs its own channel:
 	// the supervisor turns it into ioctl(TIOCSWINSZ) -> SIGWINCH.
@@ -147,6 +153,63 @@ type Headroom struct {
 	MemFreeMB   int    `json:"mem_free_mb"`
 	MemLimitMB  int    `json:"mem_limit_mb"`
 	Sessions    int    `json:"sessions"`
+}
+
+// ListDir asks for one directory's entries. Workspace-relative; the supervisor
+// resolves it against the workspace root and refuses anything that escapes.
+//
+// Paginated and never recursive, because the tunnel caps a frame at 1 MiB and
+// carries live PTY traffic alongside this -- one `node_modules` would exceed
+// both the frame and anyone's patience.
+type ListDir struct {
+	Path   string `json:"path"`
+	Offset int    `json:"offset,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
+}
+
+// DirEntry is one file or directory. Metadata only: no contents ride this
+// channel, because section 2.7's claim is that we cannot read session content
+// and file bodies through the relay would be a plainer contradiction of it than
+// the PTY stream ever was.
+type DirEntry struct {
+	Name     string `json:"name"`
+	IsDir    bool   `json:"is_dir"`
+	Size     int64  `json:"size"`
+	Mode     string `json:"mode"`
+	ModTime  string `json:"mod_time"`
+	IsSymlink bool  `json:"is_symlink,omitempty"`
+}
+
+// DirListing is the reply. Path echoes back the resolved workspace-relative
+// path, so a client that asked for ".." learns where it actually landed.
+type DirListing struct {
+	Path    string     `json:"path"`
+	Entries []DirEntry `json:"entries"`
+	// Total is the entry count before pagination, so a client can say
+	// "1000 of 84213" rather than silently truncating.
+	Total     int  `json:"total"`
+	Truncated bool `json:"truncated"`
+}
+
+// ProcessList reports what is running inside the task, each process attributed
+// to the session it descends from. Never carries environments.
+type ProcessList struct {
+	Processes []ProcessInfo `json:"processes"`
+	// Available is false where /proc cannot be read -- the local driver on
+	// darwin -- so a client shows "unknown" instead of "nothing is running".
+	Available bool `json:"available"`
+}
+
+type ProcessInfo struct {
+	PID       int     `json:"pid"`
+	PPID      int     `json:"ppid"`
+	Name      string  `json:"name"`
+	State     string  `json:"state"`
+	RSSKB     int64   `json:"rss_kb"`
+	CPUSecs   float64 `json:"cpu_secs"`
+	StartedAt string  `json:"started_at,omitempty"`
+	Cmdline   string  `json:"cmdline,omitempty"`
+	SessionID string  `json:"session_id,omitempty"`
 }
 
 // SessionExited reports a child process ending, so the control plane can drive

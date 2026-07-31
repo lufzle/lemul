@@ -285,6 +285,16 @@ Keep the two orthogonal: **permission gates the verb, scope gates the object.**
 > which takes the `cols-1` path — repaint for the new viewer, no resize for
 > anyone. `ptysession.TestViewerAttachDoesNotResizeTheSession`.
 
+> **The workspace explorer raises the cost of this gap, 2026-07-31.** Attaching
+> to another user's session is at least *visible* — both attachers drive the same
+> PTY, so it cannot be done quietly. The explorer (§2.6) reads file paths,
+> directory trees and command lines with nothing to notice, so the same missing
+> authorisation now buys silent reconnaissance across every workspace rather than
+> a conspicuous intrusion into one. It ships behind `FF_WORKSPACE_EXPLORER`, off
+> by default, and the console stays loopback-bound; that is a bound, not a fix.
+> It moves owner-scoping up the list rather than changing what owner-scoping has
+> to do.
+
 > **Session attach must be owner-scoped.** A session is user-specific (§2.3) while
 > a workspace can be shared at `team` or `org` scope, so authorising attach at the
 > *workspace* level would let one user land in another's live conversation.
@@ -322,7 +332,30 @@ GET    /v1/workspaces/{wid}/events       SSE — status transitions
 GET    /v1/tenants/{tid}/usage           derived from OTel
 
 GET    /v1/auth/config                   how to sign in to THIS deployment
+
+GET    /v1/workspaces/{wid}/fs           directory listing — metadata, never contents
+GET    /v1/workspaces/{wid}/processes    running processes, attributed to sessions
+GET    /v1/workspaces/{wid}/resources    CPU · memory · disk · network, with history
 ```
+
+The last three are the **workspace explorer** (`FF_WORKSPACE_EXPLORER`, off by
+default), and they exist for the §13 risk this document calls the largest: once
+the data plane lives in customer accounts we cannot reproduce a failure or attach
+to a wedged sandbox. Three properties are deliberate. They are reads that never
+place a task, on the §2.6 doctrine that looking should not bill anyone for a cold
+start. There is **no write verb** on the supervisor to call, so read-only is
+structural rather than enforced — the strongest form it can take, and the lesson
+of viewer mode's third door. And they carry **no file contents**: bodies through
+the relay would contradict §2.7 more plainly than the PTY stream ever did, being
+structured and addressable, so adding them is an E2E decision rather than a
+feature toggle.
+
+Two exclusions worth recording because one was found the hard way. Process
+environments are never read — `/proc/<pid>/environ` holds the gateway credential
+that §12.4's whole design keeps out of reach. **Command lines needed the same
+treatment**: the supervisor's own argv carries `-token`, the workspace tunnel
+credential, and it rendered in full in the console the first time the panel met a
+real task. An exclusion that covers only the door you anticipated is not one.
 
 `/v1/auth/config` is unauthenticated by necessity — it is what a client reads
 *before* it has a token — and carries no secret, since the CLI is a public OAuth

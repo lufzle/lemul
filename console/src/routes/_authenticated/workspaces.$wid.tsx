@@ -56,6 +56,18 @@ function WorkspaceDetail() {
           ← workspaces
         </Link>
         <h1 className="font-mono text-lg text-neutral-100">{wid}</h1>
+        {/* Gated by the same flag as the route it points at. Hiding only the
+            link would leave the URL reachable, which makes the flag decoration
+            rather than a control. */}
+        {flags.explorer ? (
+          <Link
+            to="/workspaces/$wid/explorer"
+            params={{ wid }}
+            className="text-sm text-sky-300 hover:underline"
+          >
+            explorer
+          </Link>
+        ) : null}
       </div>
 
       {error ? (
