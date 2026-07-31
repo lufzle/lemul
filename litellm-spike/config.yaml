@@ -1,27 +1,40 @@
-# LiteLLM proxy for spike: does Claude Code work through a gateway? (§12.4)
+# LiteLLM proxy for the spike: does Claude Code work through a gateway? (§12.4)
 #
-# Backend is Bedrock in aureum-dev-full-access, the one account with working
-# entitlement. That is deliberate -- the spike is about the GATEWAY hop, so the
-# thing behind it has to be known-good or a failure proves nothing.
+# Backend is OpenRouter. Bedrock in aureum-dev-full-access was the original
+# backend and still works -- `git log -p config.yaml` has the block -- but
+# OpenRouter needs one credential rather than a working entitlement in a
+# particular AWS account, which is the friction that left two of the three
+# accounts in docs/onboarding-bedrock.md unusable.
+#
+# Neither choice is the product. §12.4's point is that the gateway is
+# CUSTOMER-hosted and the provider behind it is theirs, so what has to hold here
+# is the gateway hop; the thing behind it only has to be known-good.
 #
 # model_name is what Claude Code sends; litellm_params.model is what LiteLLM
-# calls. Claude Code's model is pinned via ANTHROPIC_DEFAULT_*_MODEL, so these
-# names have to match those pins exactly.
+# calls. Claude Code's model is pinned via ANTHROPIC_DEFAULT_*_MODEL, so the
+# left-hand names must match the control plane's -pins exactly:
+#
+#   -pins 'opus=claude-opus-4-8,sonnet=claude-sonnet-4-6,haiku=claude-haiku-4-5'
+#
+# Two spellings to keep straight. OpenRouter uses dots where our pins use dashes
+# (claude-sonnet-4.6 vs claude-sonnet-4-6), and the opus tier here is 4.8, not
+# the 5 the Bedrock configuration pinned -- so a stale -pins flag asks for a
+# model this gateway does not serve, and the session dies on its first prompt.
 model_list:
-  - model_name: claude-opus-5
+  - model_name: claude-opus-4-8
     litellm_params:
-      model: bedrock/us.anthropic.claude-opus-5
-      aws_region_name: us-east-2
-
-  - model_name: claude-haiku-4-5
-    litellm_params:
-      model: bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0
-      aws_region_name: us-east-2
+      model: openrouter/anthropic/claude-opus-4.8
+      api_key: os.environ/OPENROUTER_API_KEY
 
   - model_name: claude-sonnet-4-6
     litellm_params:
-      model: bedrock/us.anthropic.claude-sonnet-4-6
-      aws_region_name: us-east-2
+      model: openrouter/anthropic/claude-sonnet-4.6
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  - model_name: claude-haiku-4-5
+    litellm_params:
+      model: openrouter/anthropic/claude-haiku-4.5
+      api_key: os.environ/OPENROUTER_API_KEY
 
 litellm_settings:
   # Spend tracking is the point of decision #12: we want per-workspace and

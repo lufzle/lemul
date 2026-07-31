@@ -4,6 +4,12 @@
 validated on its two load-bearing assumptions.
 Measured 2026-07-30, Claude Code **2.1.220**, `ghcr.io/berriai/litellm:main-stable`.
 
+> **The backend moved on 2026-07-31.** Everything below was measured against
+> Bedrock; `config.yaml` now points at **OpenRouter** (`anthropic/claude-opus-4.8`,
+> `claude-sonnet-4.6`, `claude-haiku-4.5`). The findings are about the gateway
+> hop and still hold, but read the Bedrock model IDs here as history rather than
+> as current configuration.
+
 ## What was being tested
 
 §12.4 proposes supporting a **customer-hosted** inference gateway alongside

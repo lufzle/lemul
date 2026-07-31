@@ -138,8 +138,14 @@ enforces one task per workspace generation.
 ## Inference
 
 Model traffic is brokered through a **customer-hosted gateway** (LiteLLM or
-similar). Direct-to-Bedrock is a draft — see §12.5; Bedrock is still how models
-are reached, as a backend *behind* the gateway.
+similar). Direct-to-Bedrock is a draft — see §12.5; Bedrock becomes one backend
+*behind* the gateway rather than something Claude Code speaks natively.
+
+Which backend is the customer's choice, not ours, and the local stack
+demonstrates it: `litellm-spike/` now runs **OpenRouter** where it ran Bedrock,
+and nothing above the gateway changed except the `-pins` names. Those names are
+the coupling to watch — they are what Claude Code asks for, so a pin naming a
+model the gateway does not serve kills the session at its first prompt.
 
 ```bash
 bin/controlplane -gateway-url https://litellm.internal:4000 -gateway-key <key>

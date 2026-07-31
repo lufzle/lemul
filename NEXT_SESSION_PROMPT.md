@@ -41,7 +41,7 @@ go build -o bin/ ./cmd/...
 AUTH=$(printf 'admin@lemul.local:Lemul-dev1!' | base64)
 bin/controlplane -addr :9000 -agent-token dev-token -session-cmd claude \
   -gateway-url http://host.docker.internal:4000 -gateway-key sk-lemul-spike \
-  -pins 'opus=claude-opus-5,sonnet=claude-sonnet-4-6,haiku=claude-haiku-4-5' \
+  -pins 'opus=claude-opus-4-8,sonnet=claude-sonnet-4-6,haiku=claude-haiku-4-5' \
   -otel-endpoint http://host.docker.internal:5080/api/default \
   -otel-headers "Authorization=Basic $AUTH" &
 
@@ -51,8 +51,15 @@ bin/runner -control-plane ws://localhost:9000 -token dev-token \
 bin/ourcli connect myproj        # also: ls / -new / -session <id> / -mode viewer
 ```
 
-`litellm-spike/.env` is gitignored and must be regenerated:
-`aws configure export-credentials --profile aureum-dev-full-access --format env-no-export > litellm-spike/.env`
+`litellm-spike/.env` is gitignored and must be recreated. The gateway now runs
+on **OpenRouter**, so it needs one line — `OPENROUTER_API_KEY=sk-or-v1-…` — and
+the account must have **credits**, which is not the same as the key having a
+spending limit (a key can report `limit: 100` while `total_credits` is 0, and
+the failure is a 402 at the first prompt).
+
+For the Bedrock backend instead, uncomment nothing — `git log -p
+litellm-spike/config.yaml` has the block — and regenerate credentials with
+`aws configure export-credentials --profile aureum-dev-full-access --format env-no-export > litellm-spike/.env`,
 then append `AWS_REGION_NAME=us-east-2`.
 
 UIs: LiteLLM `localhost:4000/ui` (`admin` / `sk-lemul-spike`), OpenObserve
