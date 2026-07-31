@@ -9,6 +9,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -21,6 +22,19 @@ import (
 	"github.com/hashicorp/yamux"
 	"github.com/lufzle/lemul-cc/internal/tunnel"
 )
+
+// ErrUnauthorized means the control plane rejected the agent's credential at
+// the upgrade. It ends the retry loop, because it is the one failure that
+// retrying cannot fix.
+//
+// A workspace credential is minted per placement and held in control-plane
+// memory, so a control-plane restart invalidates every live task's credential
+// permanently -- there is no later moment at which the same credential starts
+// working. Treated as transient, that produced a task reconnecting every two
+// seconds forever: unreachable, holding the workspace volume, and on Fargate
+// billing indefinitely with nothing able to stop it. Exiting instead lets the
+// scheduler reclaim it, and the control plane places a fresh task on demand.
+var ErrUnauthorized = errors.New("control plane rejected the agent credential")
 
 type Config struct {
 	// URL is the control-plane tunnel endpoint, ws:// or wss://.
@@ -64,6 +78,12 @@ func Run(ctx context.Context, cfg Config, h Handler) error {
 			return ctx.Err()
 		}
 		h.OnDisconnect(err)
+		// The one error worth giving up on. Everything else -- a dropped
+		// connection, a relay redeploy, a network partition -- is a reason to
+		// keep trying, which is what keeps an unattended run alive (section 2.8).
+		if errors.Is(err, ErrUnauthorized) {
+			return err
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -91,6 +111,11 @@ func connectAndServe(ctx context.Context, cfg Config, h Handler) error {
 	ws, resp, err := websocket.DefaultDialer.DialContext(ctx, u.String(), hdr)
 	if err != nil {
 		if resp != nil {
+			// 401/403 is a verdict on the credential rather than a hiccup, and
+			// the credential cannot change without a new placement.
+			if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+				return fmt.Errorf("dial %s: %w (http %s)", u.Redacted(), ErrUnauthorized, resp.Status)
+			}
 			return fmt.Errorf("dial %s: %w (http %s)", u.Redacted(), err, resp.Status)
 		}
 		return fmt.Errorf("dial %s: %w", u.Redacted(), err)

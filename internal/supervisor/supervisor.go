@@ -10,6 +10,7 @@ package supervisor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -125,6 +126,14 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		},
 	}
 	err := agent.Run(ctx, cfg, s)
+	// Say why the task is going away. A workspace that disappears mid-run is
+	// alarming, and "the control plane no longer recognises this task" is a
+	// different problem from a crash -- it means a replacement placement is what
+	// fixes it, not an investigation of this one.
+	if errors.Is(err, agent.ErrUnauthorized) {
+		log.Printf("this task is orphaned: %v", err)
+		log.Printf("exiting so it can be reclaimed; %d session(s) end with it", s.mgr.Count())
+	}
 	s.mgr.StopAll(true)
 	return err
 }
