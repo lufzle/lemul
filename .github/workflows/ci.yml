@@ -1,0 +1,81 @@
+# Quality gates.
+#
+# NOTE: this repository has no remote yet, so nothing here has ever run. It is
+# committed now because the gates it invokes are the same `make` targets that
+# run locally -- when a remote appears this becomes live rather than needing to
+# be written and debugged at the same time.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # Read from go.mod rather than pinned here, so the toolchain bump that
+          # govulncheck forces happens in one place. That is not hypothetical:
+          # its first run reported 23 standard-library vulnerabilities purely
+          # because go.mod named a stale patch release.
+          go-version-file: go.mod
+          check-latest: true
+
+      - run: go build ./...
+
+      # -race because this codebase is goroutines around a PTY and a tunnel, and
+      # the bugs it has actually hit are exactly the kind -race finds.
+      - run: go test ./... -race
+
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+      - name: gosec
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          # Exclusions and their justification live in the Makefile.
+          gosec -quiet -exclude=G204,G304,G704,G115,G101 -exclude-dir=.tools ./...
+
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # image/entrypoint.sh renders Claude Code's managed settings. A quoting
+      # bug there is a silent misconfiguration of every workspace, which is
+      # exactly the class shellcheck catches and review does not.
+      - run: shellcheck image/*.sh
+
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform fmt -check -recursive terraform/
+      - run: terraform -chdir=terraform init -backend=false
+      - run: terraform -chdir=terraform validate
+
+  console:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: console
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bunx --bun oxlint

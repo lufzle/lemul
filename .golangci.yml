@@ -1,0 +1,75 @@
+version: "2"
+
+run:
+  timeout: 5m
+  # The e2e suite builds and execs the real supervisor binary, so it needs the
+  # build tags the rest of the tree uses. Nothing special today; here so that a
+  # future tag does not silently drop a package from linting.
+  tests: true
+
+linters:
+  default: none
+  enable:
+    # The load-bearing four.
+    - errcheck # an unchecked error is the bug class this codebase keeps hitting
+    - govet
+    - staticcheck
+    - ineffassign
+
+    - unused
+    - bodyclose # an unclosed response body leaks a connection per call
+    - noctx # an HTTP call without a context cannot be cancelled or timed out
+    - contextcheck
+    - misspell
+
+    # For the Postgres work. Enabled before the code exists so the first query
+    # written is already covered rather than retrofitted.
+    - rowserrcheck
+    - sqlclosecheck
+
+  settings:
+    errcheck:
+      # check-blank stays OFF. This codebase writes `_ = stream.Close()`
+      # deliberately and often -- closing a stream whose peer has already gone is
+      # the normal path, not an oversight. Turning it on would bury the genuine
+      # findings under hundreds of those.
+      #
+      # The consequence is worth stating plainly: errcheck will NOT catch a
+      # discarded error that someone wrote `_ =` in front of. Those have to be
+      # found by reading, and fixed by checking them.
+      check-blank: false
+      exclude-functions:
+        # Writing to a terminal. There is no recovery from a failed write to
+        # stdout -- reporting it would mean writing to stdout.
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        # Best-effort writes to a peer that may already be gone. The caller has
+        # no recovery beyond what it already does.
+        - (github.com/lufzle/lemul/internal/tunnel).WriteMsg
+        - (github.com/lufzle/lemul/internal/tunnel).WriteFrame
+
+    staticcheck:
+      checks:
+        - all
+        # ST1000: package comments. Every package here has one; this is about
+        # the exact required phrasing, which we deliberately do not follow --
+        # these comments explain WHY the package exists, not what it is named.
+        - -ST1000
+
+  exclusions:
+    generated: lax
+    rules:
+      # Test helpers close and write for effect; an unchecked error there fails
+      # the test anyway, which is the assertion. noctx likewise: a test's HTTP
+      # call has the test's own deadline, and threading a context through every
+      # helper would obscure what each one is actually asserting.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - bodyclose
+          - noctx
+
+formatters:
+  enable:
+    - gofmt
