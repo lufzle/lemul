@@ -977,7 +977,7 @@ lem login          # OAuth device flow (RFC 8628); approve in a browser
 `lem login` also relays its **ID token** to `PUT /v1/identity`. An access token
 minted for an API resource carries a subject and no identity claims, so a signed
 assertion is the only trustworthy source of an email — and the email is what
-turns `forty-crimson-windmill` into "Dario's Org". The control plane checks the
+turns `forty-crimson-windmill` into "Ada's Org". The control plane checks the
 ID token's subject against the access token's, so a caller can name only itself.
 The two client ids are both configured because an ID token is audienced to
 whichever client asked for it, and the console and CLI are different clients.

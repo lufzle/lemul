@@ -107,7 +107,7 @@ func TestMyOwnIDTokenIsAccepted(t *testing.T) {
 	h, iss := authedServer(t)
 
 	access := iss.AccessToken(t, "alice")
-	mine := iss.IDToken(t, "alice", "alice@sinumo.com")
+	mine := iss.IDToken(t, "alice", "alice@example.com")
 
 	code, body := do(t, h, http.MethodPut, "/v1/identity", access,
 		fmt.Sprintf(`{"id_token":%q}`, mine))
@@ -118,7 +118,7 @@ func TestMyOwnIDTokenIsAccepted(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &out); err != nil {
 		t.Fatalf("decode: %v (%s)", err, body)
 	}
-	if out.Email != "alice@sinumo.com" {
+	if out.Email != "alice@example.com" {
 		t.Errorf("email came back %q", out.Email)
 	}
 	// And it named her organization, which is the other half of what this
@@ -135,7 +135,7 @@ func TestMyOwnIDTokenIsAccepted(t *testing.T) {
 func TestAnAccessTokenIsNotAcceptedAsAnIdentity(t *testing.T) {
 	h, iss := authedServer(t)
 
-	access := iss.Mint(t, authtest.Audience, "alice", "alice@sinumo.com")
+	access := iss.Mint(t, authtest.Audience, "alice", "alice@example.com")
 	code, body := do(t, h, http.MethodPut, "/v1/identity", access,
 		fmt.Sprintf(`{"id_token":%q}`, access))
 	if code != http.StatusBadRequest {

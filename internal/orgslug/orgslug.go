@@ -6,7 +6,7 @@
 // It is what a user types (`lem --org forty-crimson-windmill`) and the {org}
 // segment of every org-scoped URL, so it is generated rather than derived from
 // the organization's display name. A display name is not a name in the sense a
-// URL needs one: it has apostrophes and spaces ("Dario's Org"), it is not
+// URL needs one: it has apostrophes and spaces ("Ada's Org"), it is not
 // unique, and it changes when someone renames it -- which would break every
 // bookmark and every script that had the old one.
 //

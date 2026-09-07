@@ -108,8 +108,8 @@ func (s *Server) handleIdentity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Name their own organization after them, once. `dario@sinumo.com` becomes
-	// "Dario's Org". NameOrg is a no-op once it has a real name, so a later
+	// Name their own organization after them, once. `ada@example.com` becomes
+	// "Ada's Org". NameOrg is a no-op once it has a real name, so a later
 	// rename survives every subsequent sign-in.
 	org, err := s.dir.OrgByID(r.Context(), p.HomeOrgID)
 	if err != nil {
@@ -133,10 +133,10 @@ func (s *Server) handleIdentity(w http.ResponseWriter, r *http.Request) {
 
 // orgNameFor builds the display name of a personal organization from an email.
 //
-//	dario@sinumo.com       -> Dario's Org
-//	dario.farzati@acme.io  -> Dario's Org
+//	ada@example.com        -> Ada's Org
+//	ada.lovelace@example.com -> Ada's Org
 //
-// Display only, and deliberately not unique -- two people called dario at
+// Display only, and deliberately not unique -- two people called ada at
 // different domains get the same string, which is fine because nothing
 // addresses an organization by name. The slug is what has to be unique.
 func orgNameFor(email string) string {
@@ -145,7 +145,7 @@ func orgNameFor(email string) string {
 		local = email
 	}
 	// The first component of first.last or first_last, which is what reads as a
-	// person's name in "Dario's Org".
+	// person's name in "Ada's Org".
 	parts := strings.FieldsFunc(local, func(r rune) bool {
 		return r == '.' || r == '_' || r == '-' || r == '+'
 	})

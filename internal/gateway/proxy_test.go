@@ -57,7 +57,7 @@ func newBroker(t *testing.T, up *upstream, user string) *Broker {
 // header must not be able to reach the gateway as anyone else.
 func TestProxyReplacesSessionCredentials(t *testing.T) {
 	up := newUpstream(t, nil)
-	b := newBroker(t, up, "dario")
+	b := newBroker(t, up, "ada")
 
 	sp, err := b.Open("s-1")
 	if err != nil {
@@ -86,12 +86,12 @@ func TestProxyReplacesSessionCredentials(t *testing.T) {
 // anything the session can set -- otherwise cost partitioning is advisory.
 func TestProxyAttributionCannotBeForged(t *testing.T) {
 	up := newUpstream(t, nil)
-	b := newBroker(t, up, "dario")
+	b := newBroker(t, up, "ada")
 
 	sp, _ := b.Open("s-real")
 	req, _ := http.NewRequest("POST", sp.BaseURL+"/v1/messages", strings.NewReader("{}"))
 	req.Header.Set("x-litellm-tags", "workspace:someone-elses,session:s-forged")
-	req.Header.Set("x-litellm-end-user-id", "not-dario")
+	req.Header.Set("x-litellm-end-user-id", "not-ada")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("request: %v", err)
@@ -101,13 +101,13 @@ func TestProxyAttributionCannotBeForged(t *testing.T) {
 	if strings.Contains(up.gotTags, "s-forged") || strings.Contains(up.gotTags, "someone-elses") {
 		t.Errorf("session-supplied tags survived: %q", up.gotTags)
 	}
-	for _, want := range []string{"workspace:w1", "session:s-real", "user:dario"} {
+	for _, want := range []string{"workspace:w1", "session:s-real", "user:ada"} {
 		if !strings.Contains(up.gotTags, want) {
 			t.Errorf("tags %q missing %q", up.gotTags, want)
 		}
 	}
-	if up.gotUser != "dario" {
-		t.Errorf("end-user header = %q, want dario", up.gotUser)
+	if up.gotUser != "ada" {
+		t.Errorf("end-user header = %q, want ada", up.gotUser)
 	}
 }
 
@@ -144,7 +144,7 @@ func TestEachSessionGetsItsOwnPortAndTag(t *testing.T) {
 // content; this guards that decision.
 func TestProxyDoesNotTouchTheBody(t *testing.T) {
 	up := newUpstream(t, nil)
-	b := newBroker(t, up, "dario")
+	b := newBroker(t, up, "ada")
 	sp, _ := b.Open("s-1")
 
 	body := `{"model":"m","max_tokens":1,"messages":[{"role":"user","content":"hi é 😀"}]}`

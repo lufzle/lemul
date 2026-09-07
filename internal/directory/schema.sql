@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS tenant (
     -- derived from the name, because a name is display text -- it has
     -- apostrophes and spaces, it is not unique, and it changes.
     slug    text NOT NULL UNIQUE,
-    -- Display only. "Dario's Org".
+    -- Display only. "Ada's Org".
     name    text NOT NULL,
     -- True until someone renames the organization. Sign-up cannot name it
     -- properly: an access token minted for an API resource carries no identity

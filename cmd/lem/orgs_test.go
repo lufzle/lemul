@@ -37,7 +37,7 @@ func fakeOrgs(t *testing.T, body string) {
 
 func TestOneOrganizationNeedsNoFlag(t *testing.T) {
 	fakeOrgs(t, `{"orgs":[
-		{"slug":"forty-crimson-windmill","name":"Dario's Org","role":"owner","personal":true}
+		{"slug":"forty-crimson-windmill","name":"Ada's Org","role":"owner","personal":true}
 	]}`)
 
 	got, err := currentOrg()
@@ -54,8 +54,8 @@ func TestOneOrganizationNeedsNoFlag(t *testing.T) {
 // whichever a default happened to name.
 func TestSeveralOrganizationsRequireTheFlag(t *testing.T) {
 	fakeOrgs(t, `{"orgs":[
-		{"slug":"forty-crimson-windmill","name":"Dario's Org","role":"owner","personal":true},
-		{"slug":"nine-cobalt-mallard","name":"Acme","role":"user","personal":false}
+		{"slug":"forty-crimson-windmill","name":"Ada's Org","role":"owner","personal":true},
+		{"slug":"nine-cobalt-mallard","name":"Widgets","role":"user","personal":false}
 	]}`)
 
 	_, err := currentOrg()
@@ -64,7 +64,7 @@ func TestSeveralOrganizationsRequireTheFlag(t *testing.T) {
 	}
 	// The error has to be actionable: a user who does not know the slugs cannot
 	// act on "--org is required" alone.
-	for _, want := range []string{"--org", "forty-crimson-windmill", "nine-cobalt-mallard", "Acme"} {
+	for _, want := range []string{"--org", "forty-crimson-windmill", "nine-cobalt-mallard", "Widgets"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not mention %q: %v", want, err)
 		}
@@ -104,7 +104,7 @@ func TestExplicitOrgIsUsedWithoutListing(t *testing.T) {
 }
 
 func TestOrgURLNestsThePath(t *testing.T) {
-	fakeOrgs(t, `{"orgs":[{"slug":"nine-cobalt-mallard","name":"Acme","role":"user"}]}`)
+	fakeOrgs(t, `{"orgs":[{"slug":"nine-cobalt-mallard","name":"Widgets","role":"user"}]}`)
 
 	u, err := orgURL("/workspaces/api/sessions")
 	if err != nil {

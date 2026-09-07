@@ -122,7 +122,7 @@ This matters because an access token minted for an API resource carries
 no name. That is OAuth working as designed: identity claims belong to the ID
 token and userinfo, and the API is meant to know a caller as a stable opaque
 subject. So the control plane records `sub` as a workspace's owner, and the
-console shows `gihv2soom1by` where a person expects `dario@lemul.local`.
+console shows `gihv2soom1by` where a person expects `ada@lemul.local`.
 
 Resolving a subject to a name needs Management API credentials — the lookup is
 for *arbitrary* users, so a caller's own token cannot do it — which is a real

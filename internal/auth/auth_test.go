@@ -366,11 +366,11 @@ func TestIDTokenFromEitherClientIsAccepted(t *testing.T) {
 	v := s.idVerifier(t)
 
 	for _, aud := range []string{consoleClientID, cliClientID} {
-		claims, err := v.VerifyIDToken(t.Context(), s.idToken(t, aud, "user-1", "dario@sinumo.com"))
+		claims, err := v.VerifyIDToken(t.Context(), s.idToken(t, aud, "user-1", "ada@example.com"))
 		if err != nil {
 			t.Fatalf("audience %q: %v", aud, err)
 		}
-		if claims.Subject != "user-1" || claims.Email != "dario@sinumo.com" {
+		if claims.Subject != "user-1" || claims.Email != "ada@example.com" {
 			t.Errorf("audience %q: got %+v", aud, claims)
 		}
 	}
