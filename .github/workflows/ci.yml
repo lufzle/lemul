@@ -1,9 +1,5 @@
-# Quality gates.
-#
-# NOTE: this repository has no remote yet, so nothing here has ever run. It is
-# committed now because the gates it invokes are the same `make` targets that
-# run locally -- when a remote appears this becomes live rather than needing to
-# be written and debugged at the same time.
+# Quality gates. Same checks as the Makefile, split so a slow job does not
+# hide a lint or Terraform failure.
 name: ci
 
 on:
@@ -11,31 +7,41 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
-  go:
+  go-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          # Read from go.mod rather than pinned here, so the toolchain bump that
-          # govulncheck forces happens in one place. That is not hypothetical:
-          # its first run reported 23 standard-library vulnerabilities purely
-          # because go.mod named a stale patch release.
           go-version-file: go.mod
           check-latest: true
 
-      - run: go build ./...
+      - run: go build ./cmd/...
 
-      # -race because this codebase is goroutines around a PTY and a tunnel, and
-      # the bugs it has actually hit are exactly the kind -race finds.
-      - run: go test ./... -race
+      # -p 1: store, mgmtapi and e2e start Postgres via testcontainers.
+      # Concurrent packages once cascaded into unrelated assertion failures.
+      - run: go test ./... -race -p 1
 
-      - uses: golangci/golangci-lint-action@v6
+  go-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - uses: golangci/golangci-lint-action@v8
         with:
           version: latest
 
@@ -47,16 +53,19 @@ jobs:
       - name: gosec
         run: |
           go install github.com/securego/gosec/v2/cmd/gosec@latest
-          # Exclusions and their justification live in the Makefile.
           gosec -quiet -exclude=G204,G304,G704,G115,G101 -exclude-dir=.tools ./...
+
+  oss-tree:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make check-oss-tree
 
   shell:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # image/entrypoint.sh renders Claude Code's managed settings. A quoting
-      # bug there is a silent misconfiguration of every workspace, which is
-      # exactly the class shellcheck catches and review does not.
+      - run: sudo apt-get update && sudo apt-get install -y shellcheck
       - run: shellcheck image/*.sh
 
   terraform:
@@ -64,9 +73,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
-      - run: terraform fmt -check -recursive terraform/
+      - run: terraform fmt -check -recursive
       - run: terraform -chdir=terraform init -backend=false
       - run: terraform -chdir=terraform validate
+      - run: terraform -chdir=deploy/terraform init -backend=false
+      - run: terraform -chdir=deploy/terraform validate
 
   console:
     runs-on: ubuntu-latest

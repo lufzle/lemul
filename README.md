@@ -1,15 +1,19 @@
-# lemul-cc
+# lemul
 
 > **Alpha software.** This project is still in **alpha** development.
 > **Try at your own risk.** APIs, data layouts, and operational behaviour
 > can change without notice. Do not use it for production workloads you
 > cannot afford to lose.
 
+[![CI](https://github.com/lufzle/lemul/actions/workflows/ci.yml/badge.svg)](https://github.com/lufzle/lemul/actions/workflows/ci.yml)
+[![License: AGPL v3](https://img.shields.io/github/license/lufzle/lemul)](LICENSE)
+
 Remote, sandboxed Claude Code workspaces that run in the **customer's own AWS
 account** and bill to their Bedrock.
 
 Licensed under the [GNU Affero General Public License v3.0](LICENSE)
-(`AGPL-3.0`).
+(`AGPL-3.0`). See [CONTRIBUTING.md](CONTRIBUTING.md) for how to report issues
+and [SECURITY.md](SECURITY.md) for vulnerability reports.
 
 Architecture, tenancy, and the runner/supervisor split are documented in
 this README and in [`docs/onboarding-bedrock.md`](docs/onboarding-bedrock.md).
@@ -1139,3 +1143,15 @@ the input box, before any model had answered. Spend is then read from
 `/spend/logs` and asserted to carry `workspace:` and `session:` tags the session
 cannot forge. What is still unexercised is that path on **Fargate**, where the
 gateway has to be genuinely reachable from the task.
+
+## Contributing
+
+The project is alpha. Issues and pull requests are welcome; see
+[CONTRIBUTING.md](CONTRIBUTING.md). Please do not open public issues for
+security problems — use [SECURITY.md](SECURITY.md).
+
+## License
+
+[GNU Affero General Public License v3.0](LICENSE) (`AGPL-3.0`).
+Network use of a modified version requires offering the corresponding source
+to those users (AGPL section 13).

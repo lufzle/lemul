@@ -1,0 +1,21 @@
+name: Feature request
+description: Propose a change or missing capability
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: This project is alpha. A small, concrete proposal is easier to act on than a redesign.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is hard or impossible today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should change, in this repository?
+    validations:
+      required: true
