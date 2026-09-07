@@ -5,7 +5,7 @@ go 1.25.12
 require (
 	github.com/aws/aws-sdk-go-v2 v1.46.0
 	github.com/aws/aws-sdk-go-v2/config v1.33.3
-	github.com/aws/aws-sdk-go-v2/service/bedrock v1.66.2
+	github.com/aws/aws-sdk-go-v2/service/bedrock v1.71.0
 	github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.56.2
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.318.1
 	github.com/aws/aws-sdk-go-v2/service/ecs v1.89.2
