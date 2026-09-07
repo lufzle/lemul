@@ -114,12 +114,12 @@ resource "aws_s3_bucket_versioning" "stack" {
 # new copy -- and user_data_replace_on_change then rebuilds the host with it.
 resource "aws_s3_object" "stack" {
   for_each = {
-    "docker-compose.yml"       = "${path.module}/../docker-compose.yml"
-    "Caddyfile"                = "${path.module}/../Caddyfile"
-    "up.sh"                    = "${path.module}/../up.sh"
-    "initdb/01-databases.sh"   = "${path.module}/../initdb/01-databases.sh"
-    "litellm.yaml"             = "${path.module}/../litellm.yaml"
-    "auth-stack/seed.ts"       = "${path.module}/../../auth-stack/seed.ts"
+    "docker-compose.yml"     = "${path.module}/../docker-compose.yml"
+    "Caddyfile"              = "${path.module}/../Caddyfile"
+    "up.sh"                  = "${path.module}/../up.sh"
+    "initdb/01-databases.sh" = "${path.module}/../initdb/01-databases.sh"
+    "litellm.yaml"           = "${path.module}/../litellm.yaml"
+    "auth-stack/seed.ts"     = "${path.module}/../../auth-stack/seed.ts"
   }
   bucket = aws_s3_bucket.stack.id
   key    = each.key
@@ -313,8 +313,8 @@ resource "aws_instance" "host" {
     volume_type = "gp3"
     # Holds signing.key and the database. Every workspace, attach and runner
     # credential in every customer account derives from that key.
-    encrypted   = true
-    tags        = var.tags
+    encrypted = true
+    tags      = var.tags
   }
 
   # Rebuild the host when the bootstrap changes. The stack files live in S3 and
@@ -322,22 +322,22 @@ resource "aws_instance" "host" {
   # counts as a change here rather than silently leaving the host on the old one.
   user_data_replace_on_change = true
   user_data_base64 = base64gzip(templatefile("${path.module}/user-data.sh.tftpl", {
-    base            = "${aws_eip.host.public_ip}.sslip.io"
-    registry        = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${data.aws_region.current.region}.amazonaws.com"
-    region          = data.aws_region.current.region
-    image_tag       = var.image_tag
-    acme_email      = var.acme_email
-    smtp_host       = "email-smtp.${data.aws_region.current.region}.amazonaws.com"
-    smtp_user       = aws_iam_access_key.smtp.id
-    smtp_pass       = aws_iam_access_key.smtp.ses_smtp_password_v4
-    smtp_from       = var.mail_from
+    base             = "${aws_eip.host.public_ip}.sslip.io"
+    registry         = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${data.aws_region.current.region}.amazonaws.com"
+    region           = data.aws_region.current.region
+    image_tag        = var.image_tag
+    acme_email       = var.acme_email
+    smtp_host        = "email-smtp.${data.aws_region.current.region}.amazonaws.com"
+    smtp_user        = aws_iam_access_key.smtp.id
+    smtp_pass        = aws_iam_access_key.smtp.ses_smtp_password_v4
+    smtp_from        = var.mail_from
     signup_allowlist = join(",", var.signup_allowlist)
-    bedrock_api_key = var.bedrock_api_key
-    pins            = var.pins
-    gateway_url     = var.gateway_url
-    gateway_key     = var.gateway_key
-    bucket          = aws_s3_bucket.stack.id
-    stack_version   = md5(join(",", [for o in aws_s3_object.stack : o.etag]))
+    bedrock_api_key  = var.bedrock_api_key
+    pins             = var.pins
+    gateway_url      = var.gateway_url
+    gateway_key      = var.gateway_key
+    bucket           = aws_s3_bucket.stack.id
+    stack_version    = md5(join(",", [for o in aws_s3_object.stack : o.etag]))
   }))
 }
 

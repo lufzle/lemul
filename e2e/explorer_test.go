@@ -147,6 +147,11 @@ func TestExplorerAttributesProcessesToSessions(t *testing.T) {
 	if len(got.Processes) == 0 {
 		t.Fatal("available with an empty process list")
 	}
+	// The local driver reads this host's /proc. On a GitHub runner that is
+	// systemd + dockerd, not a workspace, so nothing is session-attributed.
+	if got.Processes[0].PID == 1 && got.Processes[0].Name == "systemd" {
+		t.Skip("explorer listed the host; attribution is asserted against a sandbox")
+	}
 	var attributed int
 	for _, p := range got.Processes {
 		if p.SessionID != "" {

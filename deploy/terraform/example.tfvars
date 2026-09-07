@@ -2,7 +2,7 @@
 
 vpc_id    = "vpc-xxxxxxxx"
 subnet_id = "subnet-xxxxxxxx" # must be PUBLIC: the EIP needs an IGW route,
-                              # and Let's Encrypt validates over port 80
+# and Let's Encrypt validates over port 80
 
 # SES is in sandbox mode, so it delivers ONLY to verified addresses -- every
 # person who signs in must be listed, and so must mail_from. Each gets a link
